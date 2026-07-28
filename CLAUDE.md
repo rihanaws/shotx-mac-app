@@ -41,10 +41,19 @@ Most controllers are lazily created and nil'd on dismiss. Singletons: `HistorySt
 The app is **not** thread-heavy at idle — measured 0.0% CPU, 3 threads, ~66 MB RSS. There are no polling loops, no busy-waits, and no idle timers. Only 4 `DispatchQueue`s exist, all instance properties.
 
 Historical slowdowns traced to two things, not thread count:
-1. **Main-thread blocking** — subprocess forks during menu construction, full-resolution PNG encoding on the main queue
+1. **Main-thread blocking** — fixed in Phase 3: `DesktopIcons` no longer forks a subprocess on the menu-bar read path, and PNG encode/index-write/thumbnail-decode work moved off `HistoryStore.add`, `ImageSaver.saveToDesktop`, and `RecordingCompletePopup` onto background queues.
 2. **Per-recording leaks** — the SCStream retain cycle (fixed, see roadmap)
 
 When touching the recording path, remember `SCStream` retains its delegate/output strongly. Always `removeStreamOutput` before dropping the stream.
+
+When touching `HistoryStore`, remember `save()` is debounced (400ms) and runs off-main — call `flushPendingSave()` before anything that must observe the index on disk immediately (e.g. app termination).
+
+## Dependencies
+
+- `Sparkle` (SwiftPM) — auto-update framework, pinned via `from:` range in `Package.swift`.
+- `website/` — separate npm project (marketing site), not part of the app build. Has its own `package.json`/`package-lock.json`.
+
+No CI runs dependency audits yet (Phase 5). If GitHub reports Dependabot alerts, there's no automatic gate blocking them — check `gh api repos/<owner>/<repo>/dependabot/alerts` and fix manually; for `website/`, bumping the `vite` semver range in `package.json` and reinstalling has been enough to clear transitive advisories (esbuild/babel/postcss all sit under vite).
 
 ## Roadmap
 

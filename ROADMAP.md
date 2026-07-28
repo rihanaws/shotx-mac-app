@@ -60,6 +60,13 @@ Same commit.
 
 **Not yet verified** (needs a GUI session): that the menu opens without a hitch, the post-capture popup appears immediately, and the recording popup's thumbnail fades in rather than delaying the panel.
 
+### Dependency bumps (out-of-band) ✅
+Commit `1ce04d6`. Not a phase — a reactive fix after GitHub flagged 9 Dependabot alerts (3 high, 5 moderate, 1 low) on the pushed history.
+
+- Sparkle 2.9.1 → 2.9.4 (fixes two advisories: post-stage-1 XPC listener accepting unvalidated connections, symlink traversal in binary delta patches).
+- `website/`: vite 5.4.11 → 8.1.5, `@vitejs/plugin-react` 4.3.4 → 6.0.4. esbuild, `@babel/core`, and `launch-editor` dropped out of the tree entirely as vite-5-only transitive deps; postcss landed at 8.5.24 (fixes both postcss advisories).
+- No CI exists yet (see Phase 5), so nothing was actually red — the alert was Dependabot's own banner. Verified with `swift build -c release` and `npm run build` instead.
+
 ---
 
 ## Next
