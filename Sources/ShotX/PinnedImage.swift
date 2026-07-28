@@ -1,6 +1,7 @@
 import Cocoa
 import SwiftUI
 
+@MainActor
 final class PinnedImageController {
     static let shared = PinnedImageController()
 
@@ -49,7 +50,17 @@ final class PinnedImageController {
         let view = PinnedImageView(
             image: image,
             onCopy: { ImageSaver.copyToClipboard(image) },
-            onSave: { ImageSaver.saveToDesktop(image) },
+            onSave: {
+                ImageSaver.saveToDesktop(image) { url in
+                    if url == nil {
+                        ToastController.shared.show(
+                            message: "Couldn't save to Desktop",
+                            icon: "exclamationmark.triangle.fill",
+                            tint: .systemRed
+                        )
+                    }
+                }
+            },
             onEdit: { [weak self, weak panel] in
                 guard let panel = panel else { return }
                 self?.close(panel: panel)

@@ -2,6 +2,7 @@ import Cocoa
 import Combine
 import UniformTypeIdentifiers
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var hotKeyManager: HotKeyManager!
@@ -417,7 +418,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             guard let self = self,
-                  let image = ScreenCapture.capture(rectInScreenCoords: screen.frame, screen: screen)
+                  let image = ScreenCapture.capture(rectInScreenCoords: screen.frame)
             else { return }
             LastCaptureStore.save(rect: screen.frame, screen: screen)
             self.handleCapturedImage(image)
@@ -432,7 +433,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self = self,
-                  let image = ScreenCapture.capture(rectInScreenCoords: stored.rect, screen: stored.screen)
+                  let image = ScreenCapture.capture(rectInScreenCoords: stored.rect)
             else { return }
             self.handleCapturedImage(image)
         }
@@ -473,7 +474,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.timerFrameOverlay = nil
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
                         guard let self = self else { return }
-                        guard let image = ScreenCapture.capture(rectInScreenCoords: rect, screen: screen) else { return }
+                        guard let image = ScreenCapture.capture(rectInScreenCoords: rect) else { return }
                         LastCaptureStore.save(rect: rect, screen: screen)
                         self.handleCapturedImage(image)
                     }
@@ -601,8 +602,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func handleCapturedImage(_ image: NSImage) {
         SoundEffect.shared.playShutter()
-        let entry = HistoryStore.shared.add(image)
-        let fileURL = entry.map { HistoryStore.shared.fileURL(for: $0) }
+        let fileURL = MainActor.assumeIsolated {
+            HistoryStore.shared.add(image).map { HistoryStore.shared.fileURL(for: $0) }
+        }
         ImageSaver.copyToClipboard(image)
         showPostCapturePopup(for: image, fileURL: fileURL)
     }

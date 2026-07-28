@@ -223,7 +223,7 @@ final class RecordingCompletePopupController {
     }
 
     private static func desktopDestination(extension ext: String) -> URL {
-        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!
+        let desktop = ImageSaver.desktopDirectory()
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
         let safeExt = ext.isEmpty ? "mp4" : ext

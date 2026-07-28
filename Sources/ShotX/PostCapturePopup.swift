@@ -29,7 +29,15 @@ final class PostCapturePopupController {
             fileURL: fileURL,
             state: state,
             onSave: { [weak self] in
-                ImageSaver.saveToDesktop(image)
+                ImageSaver.saveToDesktop(image) { url in
+                    if url == nil {
+                        ToastController.shared.show(
+                            message: "Couldn't save to Desktop",
+                            icon: "exclamationmark.triangle.fill",
+                            tint: .systemRed
+                        )
+                    }
+                }
                 self?.dismiss()
             },
             onEdit: { [weak self] in

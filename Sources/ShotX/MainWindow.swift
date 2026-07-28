@@ -5,6 +5,7 @@ final class MainWindowState: ObservableObject {
     @Published var tab: MainView.Tab = .history
 }
 
+@MainActor
 final class MainWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     let state = MainWindowState()
@@ -324,7 +325,15 @@ struct HistoryCard: View {
 
     private func saveToDesktop() {
         guard let img = fullImage else { return }
-        ImageSaver.saveToDesktop(img)
+        ImageSaver.saveToDesktop(img) { url in
+            if url == nil {
+                ToastController.shared.show(
+                    message: "Couldn't save to Desktop",
+                    icon: "exclamationmark.triangle.fill",
+                    tint: .systemRed
+                )
+            }
+        }
     }
 
     private func edit() {
@@ -347,7 +356,7 @@ struct HistoryCard: View {
 
     private func saveFile() {
         let url = history.fileURL(for: entry)
-        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!
+        let desktop = ImageSaver.desktopDirectory()
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
         let ext = url.pathExtension.isEmpty ? "mp4" : url.pathExtension
@@ -355,7 +364,13 @@ struct HistoryCard: View {
         do {
             try FileManager.default.copyItem(at: url, to: dest)
             NSWorkspace.shared.activateFileViewerSelecting([dest])
-        } catch { /* silent */ }
+        } catch {
+            ToastController.shared.show(
+                message: "Couldn't save recording: \(error.localizedDescription)",
+                icon: "exclamationmark.triangle.fill",
+                tint: .systemRed
+            )
+        }
     }
 
     // MARK: - Shared

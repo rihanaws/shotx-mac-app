@@ -380,7 +380,6 @@ final class RecordingController {
         panel.orderFrontRegardless()
         stopPanel = panel
 
-        startDate = Date()
         elapsedTimer?.invalidate()
         let t = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {

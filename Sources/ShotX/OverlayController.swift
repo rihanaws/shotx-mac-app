@@ -44,7 +44,7 @@ final class OverlayController {
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
-            let image = ScreenCapture.capture(rectInScreenCoords: rect, screen: screen)
+            let image = ScreenCapture.capture(rectInScreenCoords: rect)
             self?.completion?(image, rect, screen)
         }
     }

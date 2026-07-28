@@ -47,6 +47,7 @@ struct CaptureEntry: Identifiable, Codable, Equatable {
     }
 }
 
+@MainActor
 final class HistoryStore: ObservableObject {
     static let shared = HistoryStore()
 
@@ -72,7 +73,8 @@ final class HistoryStore: ObservableObject {
     }()
 
     init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         let root = appSupport.appendingPathComponent("ShotX", isDirectory: true)
         historyDir = root.appendingPathComponent("History", isDirectory: true)
         indexURL = root.appendingPathComponent("history.json")
@@ -80,10 +82,22 @@ final class HistoryStore: ObservableObject {
         load()
     }
 
+    /// A missing index (first launch) is expected and leaves `entries` at its
+    /// empty default. A *present but undecodable* index is different — every
+    /// capture file referenced by it is still sitting in `historyDir`, and if
+    /// we silently start from `[]`, the next `save()` overwrites `history.json`
+    /// with only the newly-added entries, permanently orphaning every prior
+    /// capture. So a corrupt index is renamed aside instead of being read
+    /// through — it never gets the chance to be overwritten, and a future
+    /// version could offer to recover files from `historyDir` against it.
     private func load() {
-        guard let data = try? Data(contentsOf: indexURL),
-              let decoded = try? JSONDecoder().decode([CaptureEntry].self, from: data)
-        else { return }
+        guard let data = try? Data(contentsOf: indexURL) else { return }
+        guard let decoded = try? JSONDecoder().decode([CaptureEntry].self, from: data) else {
+            let backupURL = indexURL.deletingLastPathComponent()
+                .appendingPathComponent("history.corrupt-\(Int(Date().timeIntervalSince1970)).json")
+            try? FileManager.default.moveItem(at: indexURL, to: backupURL)
+            return
+        }
         entries = decoded
     }
 
@@ -248,7 +262,10 @@ final class HistoryStore: ObservableObject {
         return image
     }
 
-    private static func downsampledImage(at url: URL, maxDim: CGFloat) -> NSImage? {
+    /// Explicitly `nonisolated` so it keeps running on the background queue
+    /// it's dispatched to in `thumbnail(for:maxDim:)` above rather than
+    /// hopping to main just because the enclosing type is `@MainActor`.
+    private static nonisolated func downsampledImage(at url: URL, maxDim: CGFloat) -> NSImage? {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
         let opts: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -260,7 +277,7 @@ final class HistoryStore: ObservableObject {
         return NSImage(cgImage: cg, size: pointSize)
     }
 
-    private static func downsampledVideoFrame(at url: URL, maxDim: CGFloat) -> NSImage? {
+    private static nonisolated func downsampledVideoFrame(at url: URL, maxDim: CGFloat) -> NSImage? {
         let asset = AVURLAsset(url: url)
         let gen = AVAssetImageGenerator(asset: asset)
         gen.appliesPreferredTrackTransform = true

@@ -907,6 +907,7 @@ final class CenteringClipView: NSClipView {
     }
 }
 
+@MainActor
 final class AnnotationWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var canvas: AnnotationCanvas?

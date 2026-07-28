@@ -1,6 +1,7 @@
 import Cocoa
 import ScreenCaptureKit
 import AVFoundation
+import os
 
 enum ScreenRecorderError: LocalizedError {
     case displayNotFound
@@ -48,11 +49,26 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
 
     private let sampleQueue = DispatchQueue(label: "com.shotx.recorder.samples", qos: .userInitiated)
     private let audioQueue = DispatchQueue(label: "com.shotx.recorder.audio", qos: .userInitiated)
-    private let stateQueue = DispatchQueue(label: "com.shotx.recorder.state")
-    private var _sessionStarted = false
+    /// Guards `_sessionStarted` across the sample and audio callback queues.
+    /// `handleVideo` needs an atomic check-and-set (only the first frame may
+    /// call `startSession`), so this is a lock rather than a synced property —
+    /// a getter/setter pair would let a concurrent audio callback observe
+    /// stale state between the read and the write.
+    private let sessionLock = OSAllocatedUnfairLock(initialState: false)
+
+    /// Atomically checks whether the session has started and, if not, marks it
+    /// started and returns `true` so the caller becomes the one to call
+    /// `writer.startSession`. Returns `false` if it was already started.
+    private func tryStartSession() -> Bool {
+        sessionLock.withLock { started in
+            if started { return false }
+            started = true
+            return true
+        }
+    }
+
     private var sessionStarted: Bool {
-        get { stateQueue.sync { _sessionStarted } }
-        set { stateQueue.sync { _sessionStarted = newValue } }
+        sessionLock.withLock { $0 }
     }
 
     private let outputURL: URL
@@ -333,11 +349,9 @@ extension ScreenRecorder: SCStreamOutput, SCStreamDelegate {
         else { return }
 
         if !sessionStarted {
-            if writer.status == .writing {
+            guard writer.status == .writing else { return }
+            if tryStartSession() {
                 writer.startSession(atSourceTime: pts)
-                sessionStarted = true
-            } else {
-                return
             }
         }
 
