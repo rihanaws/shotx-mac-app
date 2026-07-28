@@ -21,8 +21,10 @@ final class WebcamWindow {
     private let imageView: NSImageView
     private let resizeHandle: ResizeHandleView
     private let session: AVCaptureSession
+    private let output: AVCaptureVideoDataOutput
     private let frameDelegate: WebcamFrameDelegate
     private let bufferQueue = DispatchQueue(label: "shotx.webcam.frames", qos: .userInteractive)
+    private var isTornDown = false
 
     private static let minDiameter: CGFloat = 100
     private static let maxDiameter: CGFloat = 420
@@ -55,6 +57,7 @@ final class WebcamWindow {
         session.addOutput(output)
         session.commitConfiguration()
         self.session = session
+        self.output = output
 
         let initialDiameter = WebcamWindow.initialDiameter(for: rect)
         let frame = NSRect(
@@ -128,11 +131,27 @@ final class WebcamWindow {
     }
 
     func dismiss() {
+        guard !isTornDown else { return }
+        isTornDown = true
+
+        // Drop the delegate before stopping so no frame lands mid-teardown.
+        output.setSampleBufferDelegate(nil, queue: nil)
         let session = self.session
         DispatchQueue.global(qos: .userInitiated).async {
             session.stopRunning()
         }
         panel.orderOut(nil)
+    }
+
+    /// Safety net: if this object is ever released without an explicit
+    /// `dismiss()`, the camera would otherwise stay live with the indicator lit.
+    deinit {
+        guard !isTornDown else { return }
+        output.setSampleBufferDelegate(nil, queue: nil)
+        let session = self.session
+        DispatchQueue.global(qos: .userInitiated).async {
+            session.stopRunning()
+        }
     }
 
     /// Disable user interaction (drag/resize) once recording starts so the

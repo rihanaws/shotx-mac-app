@@ -25,6 +25,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Boot Sparkle so periodic background update checks begin.
         MainActor.assumeIsolated { _ = UpdaterController.shared }
 
+        // Sweep scratch files orphaned by a crash or force-quit in a prior run.
+        DispatchQueue.global(qos: .utility).async {
+            RecordingController.cleanUpStaleTemporaryFiles()
+        }
+
         // Show the permissions prompt on launch if Screen Recording isn't granted.
         // Slight delay so the menu bar icon appears first and gives the user
         // visual context that the app launched.
@@ -622,18 +627,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Windows
 
-    @objc private func showHistory() {
+    /// Lazily creates the main window controller, releasing it again when the
+    /// window closes so the SwiftUI history grid doesn't stay resident forever.
+    private func showMainWindow(tab: MainView.Tab) {
         if mainWindowController == nil {
-            mainWindowController = MainWindowController()
+            let controller = MainWindowController()
+            controller.onClose = { [weak self] in
+                self?.mainWindowController = nil
+            }
+            mainWindowController = controller
         }
-        mainWindowController?.show(tab: .history)
+        mainWindowController?.show(tab: tab)
+    }
+
+    @objc private func showHistory() {
+        showMainWindow(tab: .history)
     }
 
     @objc private func showSettings() {
-        if mainWindowController == nil {
-            mainWindowController = MainWindowController()
-        }
-        mainWindowController?.show(tab: .settings)
+        showMainWindow(tab: .settings)
     }
 
     @objc private func checkForUpdates() {
@@ -690,5 +702,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    // MARK: - Termination
+
+    /// Quitting mid-recording would otherwise tear the process down with the
+    /// AVAssetWriter unfinalized (leaving an unplayable MP4), the SCStream
+    /// still capturing, and the camera indicator lit. Defer termination just
+    /// long enough to finish the file cleanly.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard RecordingController.shared.isRecording else {
+            PinnedImageController.shared.closeAll()
+            return .terminateNow
+        }
+
+        // Backstop: if finalizing wedges, quit anyway rather than hanging the
+        // app forever. `finishWriting()` isn't cancellable, so this reply races
+        // the one below — AppKit ignores whichever arrives second.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+
+        Task { @MainActor in
+            await RecordingController.shared.finishForTermination()
+            PinnedImageController.shared.closeAll()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+
+        return .terminateLater
     }
 }

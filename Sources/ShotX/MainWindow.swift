@@ -5,9 +5,14 @@ final class MainWindowState: ObservableObject {
     @Published var tab: MainView.Tab = .history
 }
 
-final class MainWindowController {
+final class MainWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     let state = MainWindowState()
+
+    /// Invoked when the user closes the window so the owner can release this
+    /// controller — otherwise the whole SwiftUI history grid stays resident
+    /// for the rest of the app's lifetime.
+    var onClose: (() -> Void)?
 
     func show(tab: MainView.Tab? = nil) {
         if let tab = tab { state.tab = tab }
@@ -28,10 +33,17 @@ final class MainWindowController {
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.setContentSize(NSSize(width: 720, height: 520))
         window.isReleasedWhenClosed = false
+        window.delegate = self
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         self.window = window
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        window?.delegate = nil
+        window = nil
+        onClose?()
     }
 }
 

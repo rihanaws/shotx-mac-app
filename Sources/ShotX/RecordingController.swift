@@ -218,6 +218,10 @@ final class RecordingController {
                 self.startDate = Date()
                 self.showStopPill()
             } catch {
+                // `start()` tears itself down on failure, but stop again
+                // defensively: leaving a live SCStream burns CPU and pins the
+                // screen-recording indicator with nothing consuming frames.
+                _ = await recorder.stop()
                 guard let self = self else { return }
                 self.recorder = nil
                 self.clickHighlight?.dismiss()
@@ -260,7 +264,18 @@ final class RecordingController {
         webcam?.dismiss()
         webcam = nil
         currentRect = nil
+
+        // Reachable from SCStream's didStopWithError, where the stream may
+        // still be live. Stop it before releasing, and drop the partial file.
+        if #available(macOS 13.0, *), let recorder = recorder as? ScreenRecorder {
+            Task {
+                if let url = await recorder.stop() {
+                    try? FileManager.default.removeItem(at: url)
+                }
+            }
+        }
         recorder = nil
+
         ToastController.shared.show(
             message: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
             icon: "exclamationmark.triangle.fill",
@@ -311,6 +326,10 @@ final class RecordingController {
                     .map { HistoryStore.shared.fileURL(for: $0) } ?? gifURL
                 self.completePopup.show(tempURL: url, duration: duration, dimensions: dimensions)
             } catch {
+                // Neither file made it into History, so both are scratch —
+                // drop the source MP4 and any partial GIF the encoder left.
+                try? FileManager.default.removeItem(at: videoURL)
+                try? FileManager.default.removeItem(at: gifURL)
                 ToastController.shared.dismiss()
                 ToastController.shared.show(
                     message: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
@@ -381,11 +400,58 @@ final class RecordingController {
         stopPanel = nil
     }
 
+    // MARK: - Shutdown
+
+    /// Finalizes an in-flight recording so the MP4 on disk is playable, and
+    /// tears down the capture overlays. Called from `applicationShouldTerminate`
+    /// before the process exits — without this the AVAssetWriter is never
+    /// finished and the file is left corrupt.
+    func finishForTermination() async {
+        clickHighlight?.dismiss()
+        clickHighlight = nil
+        webcam?.dismiss()
+        webcam = nil
+
+        guard isRecording, #available(macOS 13.0, *),
+              let recorder = recorder as? ScreenRecorder else { return }
+
+        isRecording = false
+        let duration = startDate.map { Date().timeIntervalSince($0) } ?? 0
+        let dimensions = currentRect?.size ?? .zero
+
+        let finishedURL = await recorder.stop()
+        self.recorder = nil
+        dismissStopPill()
+        frameOverlay.dismiss()
+        currentRect = nil
+
+        // Preserve the recording rather than discarding the user's work.
+        if let url = finishedURL {
+            _ = HistoryStore.shared.add(videoAt: url, duration: duration, dimensions: dimensions)
+        }
+    }
+
     // MARK: - Helpers
 
     private static func temporaryMP4URL() -> URL {
         let dir = FileManager.default.temporaryDirectory
         return dir.appendingPathComponent("shotx-\(UUID().uuidString).mp4")
+    }
+
+    /// Removes `shotx-` scratch files orphaned by a crash or a force-quit in a
+    /// previous run. Recordings are moved into History on success, so anything
+    /// still in the temp dir at launch is dead weight.
+    nonisolated static func cleanUpStaleTemporaryFiles() {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory
+        guard let contents = try? fm.contentsOfDirectory(
+            at: dir,
+            includingPropertiesForKeys: nil
+        ) else { return }
+
+        for url in contents where url.lastPathComponent.hasPrefix("shotx-") {
+            try? fm.removeItem(at: url)
+        }
     }
 
     private static func positionBottomCenter(size: NSSize, screen: NSScreen) -> NSPoint {

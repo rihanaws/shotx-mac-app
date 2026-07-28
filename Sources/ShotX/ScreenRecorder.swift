@@ -40,6 +40,11 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
     private var micAudioInput: AVAssetWriterInput?
     private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var micSession: AVCaptureSession?
+    private var micOutput: AVCaptureAudioDataOutput?
+    /// Tracks which SCStream outputs were registered so `teardownStream()`
+    /// can remove exactly those — SCStream retains `self` as delegate and
+    /// output, so failing to remove them leaks the whole recorder graph.
+    private var registeredOutputTypes: [SCStreamOutputType] = []
 
     private let sampleQueue = DispatchQueue(label: "com.shotx.recorder.samples", qos: .userInitiated)
     private let audioQueue = DispatchQueue(label: "com.shotx.recorder.audio", qos: .userInitiated)
@@ -185,15 +190,58 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
 
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
+        registeredOutputTypes.append(.screen)
         if captureSystemAudio {
             try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue)
+            registeredOutputTypes.append(.audio)
         }
         self.stream = stream
-        try await stream.startCapture()
 
-        if captureMicrophone {
-            try await startMicCapture()
+        // From here on the stream may be live, so any failure must tear it all
+        // down before rethrowing — otherwise the SCStream keeps capturing with
+        // nothing consuming it and the screen-recording indicator stays lit.
+        do {
+            try await stream.startCapture()
+            if captureMicrophone {
+                try await startMicCapture()
+            }
+        } catch {
+            await teardownAfterFailedStart()
+            throw error
         }
+    }
+
+    /// Releases every capture resource without finalizing the movie. Used when
+    /// `start()` fails partway; the partial output file is removed too.
+    private func teardownAfterFailedStart() async {
+        await teardownStream()
+        stopMicCapture()
+        assetWriter?.cancelWriting()
+        assetWriter = nil
+        videoInput = nil
+        systemAudioInput = nil
+        micAudioInput = nil
+        pixelBufferAdaptor = nil
+        try? FileManager.default.removeItem(at: outputURL)
+    }
+
+    /// Stops the SCStream and removes `self` as its output, breaking the
+    /// stream ⇄ recorder retain cycle.
+    private func teardownStream() async {
+        guard let stream = stream else { return }
+        do { try await stream.stopCapture() } catch { /* tear down anyway */ }
+        for type in registeredOutputTypes {
+            try? stream.removeStreamOutput(self, type: type)
+        }
+        registeredOutputTypes.removeAll()
+        self.stream = nil
+    }
+
+    private func stopMicCapture() {
+        micOutput?.setSampleBufferDelegate(nil, queue: nil)
+        micOutput = nil
+        micSession?.stopRunning()
+        micSession = nil
     }
 
     private func startMicCapture() async throws {
@@ -220,20 +268,36 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
 
         session.startRunning()
         micSession = session
+        micOutput = output
     }
 
     func stop() async -> URL? {
-        do { try await stream?.stopCapture() } catch { /* finalize anyway */ }
-        micSession?.stopRunning()
-        micSession = nil
+        await teardownStream()
+        stopMicCapture()
+
+        // stopCapture()/stopRunning() don't synchronously drain in-flight
+        // callbacks. Fence through both sample queues so no append can race
+        // markAsFinished() — appending after it raises an ObjC exception.
+        sampleQueue.sync {}
+        audioQueue.sync {}
+
         videoInput?.markAsFinished()
         systemAudioInput?.markAsFinished()
         micAudioInput?.markAsFinished()
+
+        var finishedURL: URL?
         if let writer = assetWriter {
             await writer.finishWriting()
-            if writer.status == .completed { return outputURL }
+            if writer.status == .completed { finishedURL = outputURL }
         }
-        return nil
+
+        assetWriter = nil
+        videoInput = nil
+        systemAudioInput = nil
+        micAudioInput = nil
+        pixelBufferAdaptor = nil
+
+        return finishedURL
     }
 }
 

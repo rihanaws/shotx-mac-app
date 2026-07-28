@@ -6,12 +6,14 @@ import UniformTypeIdentifiers
 enum GIFConverterError: LocalizedError {
     case emptyVideo
     case destinationFailed
+    case noFramesDecoded
     case finalizeFailed
 
     var errorDescription: String? {
         switch self {
         case .emptyVideo: return "Recorded video is empty."
         case .destinationFailed: return "Couldn't create GIF file."
+        case .noFramesDecoded: return "Couldn't read any frames from the recording."
         case .finalizeFailed: return "Couldn't finalize GIF."
         }
     }
@@ -69,17 +71,27 @@ enum GIFConverter {
             ]
         ]
 
+        var addedFrames = 0
         for index in 0..<totalFrames {
             let time = CMTime(seconds: Double(index) * frameDelay, preferredTimescale: 600)
             do {
                 let result = try await generator.image(at: time)
                 CGImageDestinationAddImage(destination, result.image, frameProperties as CFDictionary)
+                addedFrames += 1
             } catch {
                 continue
             }
         }
 
+        // Finalizing a zero-frame destination can still "succeed", handing the
+        // caller a GIF that no viewer can open. Fail loudly instead.
+        guard addedFrames > 0 else {
+            try? FileManager.default.removeItem(at: outputURL)
+            throw GIFConverterError.noFramesDecoded
+        }
+
         guard CGImageDestinationFinalize(destination) else {
+            try? FileManager.default.removeItem(at: outputURL)
             throw GIFConverterError.finalizeFailed
         }
     }
