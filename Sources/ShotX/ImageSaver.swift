@@ -8,15 +8,26 @@ enum ImageSaver {
         return rep.representation(using: .png, properties: [:])
     }
 
-    @discardableResult
-    static func saveToDesktop(_ image: NSImage) -> URL? {
+    private static let saveQueue = DispatchQueue(label: "com.shotx.imagesaver", qos: .userInitiated)
+
+    /// Encodes and writes off the main thread — a full-resolution PNG encode is
+    /// hundreds of ms on a 6K display. `completion` runs on the main queue with
+    /// the destination URL, or `nil` if the encode or write failed.
+    static func saveToDesktop(_ image: NSImage, completion: ((URL?) -> Void)? = nil) {
         let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
         let url = desktop.appendingPathComponent("ShotX \(formatter.string(from: Date())).png")
-        guard let data = pngData(from: image) else { return nil }
-        try? data.write(to: url)
-        return url
+
+        saveQueue.async {
+            var result: URL?
+            if let data = pngData(from: image), (try? data.write(to: url)) != nil {
+                result = url
+            }
+            if let completion = completion {
+                DispatchQueue.main.async { completion(result) }
+            }
+        }
     }
 
     static func copyToClipboard(_ image: NSImage) {

@@ -711,6 +711,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// still capturing, and the camera indicator lit. Defer termination just
     /// long enough to finish the file cleanly.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // The index write is debounced, so force it out before we exit.
+        HistoryStore.shared.flushPendingSave()
+
         guard RecordingController.shared.isRecording else {
             PinnedImageController.shared.closeAll()
             return .terminateNow

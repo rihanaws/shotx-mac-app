@@ -44,24 +44,31 @@ Same commit.
 
 **Not yet verified** (needs a GUI session): the leak fixes themselves. Proof is Instruments → Allocations across ~10 consecutive recordings — allocations should return to baseline instead of retaining one recorder graph per recording. Same for denying mic permission and confirming the screen-recording indicator clears.
 
+### Phase 3 — Main-thread stalls (the felt lag) ✅
+
+| Fix | File | Was |
+|---|---|---|
+| No subprocess on the read path | `DesktopIcons.swift` | `isVisible()` runs from `menuNeedsUpdate`, so every menu-bar click forked `defaults read` and blocked main on `waitUntilExit()`. Now reads `UserDefaults(suiteName: "com.apple.finder")` directly. The latent pipe deadlock (read *after* `waitUntilExit()`) is gone with the pipe. |
+| Write path off-main + reaped | `DesktopIcons.swift` | `setVisible` forked twice on main and never waited on `killall`, leaving a zombie. Now runs on a background queue and waits on both; the write is skipped if `defaults` exits non-zero. |
+| Async PNG encode | `HistoryStore.add(_:)` | Full-resolution encode + write ran synchronously on main on every capture (~100 MB of intermediate TIFF on a 6K display). The entry is now returned immediately — the filename is a UUID known up front — and the encode happens on `ioQueue`. A failed encode removes the entry rather than leaving a broken tile. |
+| Debounced index write | `HistoryStore.save()` | Re-encoded and rewrote all 100 entries on main on every mutation. Now snapshots on main, coalesces at 400 ms, and encodes/writes on `ioQueue`. `flushPendingSave()` forces it out from `applicationShouldTerminate`. |
+| Async desktop save | `ImageSaver.saveToDesktop` | Encoded and wrote on main. Now off-main with a main-queue completion carrying the URL — which also makes the failure observable instead of the old unconditional-return-after-`try?`. `Annotation`'s save surfaces a toast on failure. |
+| Async popup thumbnail | `RecordingCompletePopup.swift` | `copyCGImage` with `.zero` tolerances decodes from the preceding keyframe and blocked `@MainActor` right before the popup appeared. The popup now shows immediately and the frame fades in via `RecordingThumbnailState`; the task is cancelled on dismiss. |
+| Bounded invalidation | `ClickHighlightWindow.swift` | 60 Hz `needsDisplay = true` on a *fullscreen* view during recording, competing with the encoder. Now `setNeedsDisplay(_:)` over the union of active ripple bounds, and `draw` skips ripples outside `dirtyRect`. |
+
+**Verified:** clean release build from scratch, zero errors, no new warnings (the two remaining are pre-existing — `ScreenRecorder.swift:308`, `WebcamWindow.swift`). The `UserDefaults` read was checked against the old `defaults read` semantics across unset / `false` / `true`.
+
+**Not yet verified** (needs a GUI session): that the menu opens without a hitch, the post-capture popup appears immediately, and the recording popup's thumbnail fades in rather than delaying the panel.
+
 ---
 
 ## Next
-
-### Phase 3 — Main-thread stalls (the felt lag)
-Highest remaining user-visible impact.
-
-- **`DesktopIcons.swift:12`** — `isVisible()` is called from `menuNeedsUpdate`, so **every menu-bar click forks `defaults read` and blocks the main thread on `waitUntilExit()`**. Replace with `UserDefaults(suiteName: "com.apple.finder")` — no subprocess at all. Keep `Process` only for the write path and move it off-main. Also fix the latent pipe deadlock (reads the pipe *after* `waitUntilExit()`), and reap the `killall`.
-- **`HistoryStore.swift:88`** — full-resolution PNG encode + disk write synchronously on main on every capture. On a 6K display that is ~100 MB of intermediate TIFF and a several-hundred-ms stall exactly when the popup should appear. Move off-main; publish on main. Same for `ImageSaver.saveToDesktop` and `Annotation.swift:1054`.
-- **`HistoryStore.save()`** — re-encodes and rewrites all 100 entries on every mutation, synchronously on main. Debounce and move off-main.
-- **`RecordingCompletePopup.swift:43`** — synchronous `AVAssetImageGenerator.copyCGImage` with `.zero` tolerances blocks `@MainActor` before the popup appears. Use the async API with a placeholder.
-- **`ClickHighlightWindow.swift:109`** — 60 Hz `needsDisplay = true` on a *fullscreen* view during recording, competing with the encoder. Restrict to the union of active ripple bounds. (Self-terminating; a recording-time cost, not an idle one.)
 
 ### Phase 4 — Correctness & crash hardening
 - **`ScreenRecorder.swift:47-51,271-278`** — `sessionStarted`'s check-then-act spans two separate `stateQueue.sync` calls, so it is not atomic across the sample and audio queues. Writer references are plain `var`s written on the main actor and read concurrently; `@unchecked Sendable` silences the compiler without providing synchronization. A fast stop/start can call `startSession` twice or append after `finishWriting` → `NSInternalInconsistencyException`. Collapse into a single locked check-and-set, and replace the per-buffer `stateQueue.sync` on the hot path (every video frame and audio buffer) with an unfair lock.
 - **Force unwraps** — `HistoryStore.swift:68` (in the singleton's `init`, crashes before any UI exists), `ImageSaver.swift:13`, `MainWindow.swift:338`, `RecordingCompletePopup.swift:197`.
 - **`HistoryStore` is not `@MainActor`** — `entries` is `@Published` and drives SwiftUI but is written from multiple contexts with no isolation. Publishing off-main is undefined behaviour.
-- **Silent failures** — `ImageSaver.swift:18` returns the URL unconditionally after `try?`, so callers show success even when nothing was written. `MainWindow.swift:346` has an empty `catch`. `HistoryStore.swift:76-81` silently discards a corrupt index, and the next write **permanently orphans every prior capture file**.
+- **Silent failures** — `ImageSaver.saveToDesktop` is now fixed (Phase 3: the completion reports `nil` on failure), but only `Annotation` acts on it; `PostCapturePopup`, `PinnedImage`, and `MainWindow` still ignore the result. `MainWindow.swift:346` has an empty `catch`. `HistoryStore.swift:76-81` silently discards a corrupt index, and the next write **permanently orphans every prior capture file**.
 - **`ScreenCapture.swift:7-28`** — the `screen` parameter is accepted but never used; the coordinate flip is computed against `NSScreen.screens.first`, so multi-display setups capture the wrong region.
 - **`RecordingController.swift:379`** — `showStopPill()` re-assigns `startDate`, making the earlier assignment dead and shortening recorded duration by the stream startup latency (200-600 ms).
 

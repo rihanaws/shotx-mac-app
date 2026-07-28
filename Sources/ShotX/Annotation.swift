@@ -1051,7 +1051,15 @@ final class AnnotationWindowController: NSObject, NSWindowDelegate {
 
     private func saveToDesktop() {
         guard let image = canvas?.flattenedImage() else { return }
-        ImageSaver.saveToDesktop(image)
+        ImageSaver.saveToDesktop(image) { url in
+            if url == nil {
+                ToastController.shared.show(
+                    message: "Couldn't save to Desktop",
+                    icon: "exclamationmark.triangle.fill",
+                    tint: .systemRed
+                )
+            }
+        }
         HistoryStore.shared.add(image)
         window?.close()
     }

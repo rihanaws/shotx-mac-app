@@ -17,6 +17,24 @@ enum VideoThumbnail {
         guard let cg = try? generator.copyCGImage(at: time, actualTime: nil) else { return nil }
         return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
     }
+
+    /// Off-main variant. `copyCGImage` with `.zero` tolerances has to decode
+    /// from the preceding keyframe, so it blocked the main actor for as long as
+    /// the decode took — right before the popup was supposed to appear.
+    static func firstFrameAsync(of url: URL) async -> NSImage? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: firstFrame(of: url))
+            }
+        }
+    }
+}
+
+/// Holds the thumbnail so the popup can render immediately with a placeholder
+/// and swap the frame in once it has decoded.
+@MainActor
+final class RecordingThumbnailState: ObservableObject {
+    @Published var image: NSImage?
 }
 
 @MainActor
@@ -29,6 +47,7 @@ final class RecordingCompletePopupController {
     private var panel: NSPanel?
     private var dismissTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
+    private var thumbnailTask: Task<Void, Never>?
     let state = RecordingCompletePopupState()
 
     private static let popupSize = NSSize(width: 250, height: 160)
@@ -41,12 +60,20 @@ final class RecordingCompletePopupController {
         state.minimized = false
         cancellables.removeAll()
 
-        let thumbnail = VideoThumbnail.firstFrame(of: tempURL)
         let isGIF = tempURL.pathExtension.lowercased() == "gif"
+
+        // Decode off-main; the popup shows immediately and the frame fades in.
+        let thumbnailState = RecordingThumbnailState()
+        thumbnailTask?.cancel()
+        thumbnailTask = Task { [weak thumbnailState] in
+            let image = await VideoThumbnail.firstFrameAsync(of: tempURL)
+            guard !Task.isCancelled else { return }
+            thumbnailState?.image = image
+        }
 
         let view = RecordingCompleteView(
             fileURL: tempURL,
-            thumbnail: thumbnail,
+            thumbnail: thumbnailState,
             duration: duration,
             dimensions: dimensions,
             isGIF: isGIF,
@@ -137,6 +164,8 @@ final class RecordingCompletePopupController {
 
     func dismiss() {
         cancelAutoDismiss()
+        thumbnailTask?.cancel()
+        thumbnailTask = nil
         cancellables.removeAll()
         panel?.orderOut(nil)
         panel = nil
@@ -206,7 +235,7 @@ final class RecordingCompletePopupController {
 
 private struct RecordingCompleteView: View {
     let fileURL: URL
-    let thumbnail: NSImage?
+    @ObservedObject var thumbnail: RecordingThumbnailState
     let duration: TimeInterval
     let dimensions: CGSize
     let isGIF: Bool
@@ -312,13 +341,15 @@ private struct RecordingCompleteView: View {
     private var thumbnailBackground: some View {
         ZStack {
             Color.black.opacity(0.4)
-            if let thumbnail = thumbnail {
-                Image(nsImage: thumbnail)
+            if let image = thumbnail.image {
+                Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .blur(radius: hovering ? 14 : 0)
+                    .transition(.opacity)
             }
         }
+        .animation(.easeOut(duration: 0.2), value: thumbnail.image != nil)
         .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 

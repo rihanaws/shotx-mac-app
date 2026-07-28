@@ -87,7 +87,26 @@ final class ClickHighlightView: NSView {
         )
         ripples.append(Ripple(point: local, startTime: CACurrentMediaTime()))
         startRefreshIfNeeded()
-        needsDisplay = true
+        setNeedsDisplay(dirtyBounds(for: [ripples[ripples.count - 1]]))
+    }
+
+    /// Bounding box of the given ripples at their maximum extent, padded for
+    /// the 3pt stroke. Invalidating this instead of the whole view matters: the
+    /// view is fullscreen and ticks at 60 Hz while the encoder is running.
+    private func dirtyBounds(for set: [Ripple]) -> NSRect {
+        guard !set.isEmpty else { return .zero }
+        let pad = maxRadius + 3
+        var rect = NSRect(
+            x: set[0].point.x - pad, y: set[0].point.y - pad,
+            width: pad * 2, height: pad * 2
+        )
+        for r in set.dropFirst() {
+            rect = rect.union(NSRect(
+                x: r.point.x - pad, y: r.point.y - pad,
+                width: pad * 2, height: pad * 2
+            ))
+        }
+        return rect
     }
 
     private func startRefreshIfNeeded() {
@@ -101,12 +120,15 @@ final class ClickHighlightView: NSView {
 
     private func tick() {
         let now = CACurrentMediaTime()
+        // Union taken before the prune so a just-expired ripple's final frame
+        // is still erased.
+        let dirty = dirtyBounds(for: ripples)
         ripples.removeAll { now - $0.startTime > rippleDuration }
         if ripples.isEmpty {
             refreshTimer?.invalidate()
             refreshTimer = nil
         }
-        needsDisplay = true
+        setNeedsDisplay(dirty)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -114,6 +136,7 @@ final class ClickHighlightView: NSView {
         for ripple in ripples {
             let age = now - ripple.startTime
             guard age >= 0, age < rippleDuration else { continue }
+            guard dirtyBounds(for: [ripple]).intersects(dirtyRect) else { continue }
             let t = CGFloat(age / rippleDuration)
 
             // Expanding outer ring

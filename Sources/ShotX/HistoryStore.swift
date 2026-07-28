@@ -56,6 +56,13 @@ final class HistoryStore: ObservableObject {
     private let historyDir: URL
     private let indexURL: URL
 
+    /// Serial queue for index encoding + disk writes. `save()` used to re-encode
+    /// all 100 entries synchronously on main on every mutation.
+    private let ioQueue = DispatchQueue(label: "com.shotx.history.io", qos: .utility)
+    /// Coalesces bursts of mutations into a single index write.
+    private var pendingSave: DispatchWorkItem?
+    private static let saveDebounce: TimeInterval = 0.4
+
     /// In-memory cache of downsampled thumbnails, keyed by entry ID. Auto-evicts
     /// on memory pressure via NSCache's built-in behaviour.
     private let thumbnailCache: NSCache<NSString, NSImage> = {
@@ -80,14 +87,44 @@ final class HistoryStore: ObservableObject {
         entries = decoded
     }
 
+    /// Debounced, off-main index write. The snapshot is taken on the calling
+    /// (main) thread so `entries` is never read across threads; encoding and
+    /// the disk write happen on `ioQueue`.
     private func save() {
-        guard let data = try? JSONEncoder().encode(entries) else { return }
-        try? data.write(to: indexURL, options: .atomic)
+        pendingSave?.cancel()
+        let snapshot = entries
+        let url = indexURL
+        let work = DispatchWorkItem {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
+        pendingSave = work
+        ioQueue.asyncAfter(deadline: .now() + Self.saveDebounce, execute: work)
     }
 
+    /// Writes the index immediately, blocking until it lands. Used at
+    /// termination so a debounced write in flight isn't lost.
+    func flushPendingSave() {
+        pendingSave?.cancel()
+        pendingSave = nil
+        let snapshot = entries
+        let url = indexURL
+        ioQueue.sync {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    /// Registers the capture and returns its entry immediately; the PNG encode
+    /// and disk write happen off-main. Callers get a valid `fileURL(for:)`
+    /// right away (the filename is a UUID known up front), but the file appears
+    /// on disk a moment later.
+    ///
+    /// A full-resolution encode is ~100 MB of intermediate TIFF on a 6K display
+    /// and used to stall main for several hundred ms exactly when the
+    /// post-capture popup should appear.
     @discardableResult
     func add(_ image: NSImage) -> CaptureEntry? {
-        guard let png = ImageSaver.pngData(from: image) else { return nil }
         let entry = CaptureEntry(
             filename: "\(UUID().uuidString).png",
             createdAt: Date(),
@@ -96,8 +133,18 @@ final class HistoryStore: ObservableObject {
             kind: .image
         )
         let url = historyDir.appendingPathComponent(entry.filename)
-        do { try png.write(to: url) } catch { return nil }
         register(entry)
+
+        ioQueue.async {
+            guard let png = ImageSaver.pngData(from: image),
+                  (try? png.write(to: url)) != nil
+            else {
+                // Encode or write failed — drop the entry so the grid doesn't
+                // show a permanently broken tile.
+                DispatchQueue.main.async { self.remove(entry) }
+                return
+            }
+        }
         return entry
     }
 
