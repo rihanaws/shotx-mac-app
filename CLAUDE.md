@@ -20,11 +20,11 @@ There is no `Info.plist` in the repo — `Scripts/build-app.sh` generates it inl
 
 Entry is `main.swift` (top-level code, no `@main`) → `AppDelegate`. The app is an accessory/agent: no Dock icon, everything hangs off an `NSStatusItem`.
 
-- `AppDelegate.swift` — status bar, menu, 4 Carbon hotkeys, all capture entry points
+- `AppDelegate.swift` — `@MainActor`, status bar, menu, 4 Carbon hotkeys, all capture entry points
 - `ScreenRecorder.swift` — ScreenCaptureKit `SCStream` + `AVAssetWriter` encoding
 - `RecordingController.swift` — `@MainActor` singleton orchestrating the record flow
 - `Annotation.swift` — largest file (~1070 lines); annotation tools, canvas, toolbar
-- `HistoryStore.swift` — capture index (`history.json`) + files in Application Support, capped at 100 entries
+- `HistoryStore.swift` — `@MainActor`, capture index (`history.json`) + files in Application Support, capped at 100 entries
 - Everything else is one window/panel controller per file
 
 Most controllers are lazily created and nil'd on dismiss. Singletons: `HistoryStore`, `RecordingController`, `PinnedImageController`, `ToastController`, `AllInOneController`, `ShortcutStore`, `SoundEffect`, `UpdaterController`.
@@ -33,7 +33,8 @@ Most controllers are lazily created and nil'd on dismiss. Singletons: `HistorySt
 
 - No dependency injection — singletons via `.shared`
 - Windows are `orderOut(nil)` + reference nil'd, not `close()`d
-- Swift 5 language mode, no strict concurrency. `MainActor.assumeIsolated { }` is the established escape hatch; concurrency warnings from AVFoundation captures are pre-existing and tolerated
+- Swift 5 language mode, no strict concurrency by default, but UI-only types (`AppDelegate`, `HistoryStore`, `AnnotationWindowController`, `PinnedImageController`, `MainWindowController`) are explicitly `@MainActor` since Phase 4 rather than relying on "runs on main in practice." `MainActor.assumeIsolated { }` is the escape hatch for contexts the compiler can't see are main-isolated (e.g. `main.swift` top-level code, `SCStream`/`AVCaptureSession` delegate callbacks known to land on main); concurrency warnings from AVFoundation captures (`WebcamWindow.swift`, `ScreenRecorder.swift`'s non-exhaustive switch) are pre-existing and tolerated.
+- The recorder's hot path (`ScreenRecorder.handleVideo`/`handleSystemAudio`, called per frame/buffer) uses `OSAllocatedUnfairLock` instead of `DispatchQueue.sync` for state shared across the sample/audio queues — cheaper, and makes check-then-act atomic (see `tryStartSession()`).
 - Sequencing sometimes uses hardcoded `asyncAfter` delays rather than real synchronization
 
 ## Performance notes

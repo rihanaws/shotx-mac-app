@@ -67,17 +67,26 @@ Commit `1ce04d6`. Not a phase — a reactive fix after GitHub flagged 9 Dependab
 - `website/`: vite 5.4.11 → 8.1.5, `@vitejs/plugin-react` 4.3.4 → 6.0.4. esbuild, `@babel/core`, and `launch-editor` dropped out of the tree entirely as vite-5-only transitive deps; postcss landed at 8.5.24 (fixes both postcss advisories).
 - No CI exists yet (see Phase 5), so nothing was actually red — the alert was Dependabot's own banner. Verified with `swift build -c release` and `npm run build` instead.
 
+### Phase 4 — Correctness & crash hardening ✅
+
+| Fix | File | Was |
+|---|---|---|
+| Atomic session start | `ScreenRecorder.swift` | `sessionStarted`'s check-then-act spanned two separate `stateQueue.sync` calls (read, then branch, then write) — not atomic across the sample and audio queues, so a fast stop/start or a racing audio callback could observe stale state. Replaced the synced property with `OSAllocatedUnfairLock<Bool>` and a `tryStartSession()` that checks-and-sets in one locked op; the hot path (every video/audio frame) now takes one lock instead of a `stateQueue.sync` dispatch. |
+| Force unwraps removed | `HistoryStore.swift`, `ImageSaver.swift`, `MainWindow.swift`, `RecordingCompletePopup.swift` | Four call sites force-unwrapped `FileManager.urls(for:in:).first` (`.desktopDirectory`, `.applicationSupportDirectory`) — returns `[]`, not nil, when unresolvable, so `.first!` was one restricted environment away from a crash. Added `ImageSaver.desktopDirectory()` with a `~/Desktop` fallback via `NSHomeDirectory()`; `HistoryStore.init` falls back to `~/Library/Application Support` the same way. |
+| `HistoryStore` isolation | `HistoryStore.swift` | Class wasn't `@MainActor` despite `@Published var entries` driving SwiftUI and being mutated from several contexts with no compiler-enforced isolation. Now `@MainActor`; the two background-queue thumbnail decoders (`downsampledImage`, `downsampledVideoFrame`) are explicitly `nonisolated` so they keep running off-main. This cascaded `@MainActor` onto `AppDelegate`, `AnnotationWindowController`, `PinnedImageController`, and `MainWindowController` — all of which were already main-thread-only in practice (AppKit/SwiftUI callback delivery), so the annotations make existing behavior compiler-checked rather than changing it. `main.swift`'s top-level `AppDelegate()` init is wrapped in `MainActor.assumeIsolated` since top-level code isn't statically isolated. |
+| Silent save failures surfaced | `PostCapturePopup.swift`, `PinnedImage.swift`, `MainWindow.swift` | Only `Annotation.swift`'s save path showed a toast on `ImageSaver.saveToDesktop` failure; the other three call sites dropped a `nil` result on the floor. All four now show the same "Couldn't save to Desktop" toast pattern. `MainWindow.saveFile()`'s empty `catch { /* silent */ }` for video/gif copy now shows the copy error too. |
+| Corrupt index no longer orphans files | `HistoryStore.swift` | `load()` swallowed a decode failure via `try?` and silently left `entries` at `[]`; the next `save()` would overwrite `history.json` with only newly-added entries, permanently orphaning every prior capture file still on disk. `load()` now renames an undecodable index aside to `history.corrupt-<timestamp>.json` instead of letting it be read through and overwritten. |
+| `RecordingController` duration fix | `RecordingController.swift` | `showStopPill()` reassigned `startDate = Date()`, stomping the true start time set moments earlier in `startRecorder`'s `Task` right after `recorder.start()` succeeded — shortening every recorded duration by the stream startup latency (200–600 ms). Removed the redundant reassignment; `showStopPill()`'s only call site already has `startDate` set. |
+
+**Not changed:** `ScreenCapture.swift`'s `screen` parameter, originally flagged as an unused-parameter bug ("multi-display setups capture the wrong region"). Traced the math: `NSScreen.frame` values already share one global coordinate space anchored to the primary display, so `primary.frame.height - rect.origin.y - rect.height` is correct regardless of which physical screen `rect` sits on — the parameter was dead code, not a latent bug. Removed it from the signature and the 4 call sites instead of trying to "fix" behavior that was already correct.
+
+**Verified:** clean `swift build` and `swift build -c release` from scratch (`rm -rf .build`), zero errors, only the two pre-existing warnings survive (`ScreenRecorder.swift:324` exhaustive switch, `WebcamWindow.swift` Sendable capture — both predate this phase).
+
+**Not yet verified** (needs a GUI session): that a fast stop/start no longer trips `NSInternalInconsistencyException`, that recorded duration now matches wall-clock instead of running short, and that a hand-corrupted `history.json` gets moved aside instead of orphaning capture files.
+
 ---
 
 ## Next
-
-### Phase 4 — Correctness & crash hardening
-- **`ScreenRecorder.swift:47-51,271-278`** — `sessionStarted`'s check-then-act spans two separate `stateQueue.sync` calls, so it is not atomic across the sample and audio queues. Writer references are plain `var`s written on the main actor and read concurrently; `@unchecked Sendable` silences the compiler without providing synchronization. A fast stop/start can call `startSession` twice or append after `finishWriting` → `NSInternalInconsistencyException`. Collapse into a single locked check-and-set, and replace the per-buffer `stateQueue.sync` on the hot path (every video frame and audio buffer) with an unfair lock.
-- **Force unwraps** — `HistoryStore.swift:68` (in the singleton's `init`, crashes before any UI exists), `ImageSaver.swift:13`, `MainWindow.swift:338`, `RecordingCompletePopup.swift:197`.
-- **`HistoryStore` is not `@MainActor`** — `entries` is `@Published` and drives SwiftUI but is written from multiple contexts with no isolation. Publishing off-main is undefined behaviour.
-- **Silent failures** — `ImageSaver.saveToDesktop` is now fixed (Phase 3: the completion reports `nil` on failure), but only `Annotation` acts on it; `PostCapturePopup`, `PinnedImage`, and `MainWindow` still ignore the result. `MainWindow.swift:346` has an empty `catch`. `HistoryStore.swift:76-81` silently discards a corrupt index, and the next write **permanently orphans every prior capture file**.
-- **`ScreenCapture.swift:7-28`** — the `screen` parameter is accepted but never used; the coordinate flip is computed against `NSScreen.screens.first`, so multi-display setups capture the wrong region.
-- **`RecordingController.swift:379`** — `showStopPill()` re-assigns `startDate`, making the earlier assignment dead and shortening recorded duration by the stream startup latency (200-600 ms).
 
 ### Phase 5 — Tests & CI
 No test target and no CI exist today (`.github/` holds only `FUNDING.yml`).
