@@ -9,3 +9,4 @@ dist/
 Resources/AppIcon.iconset/
 .sparkle-tools/
 .signing-identity
+.serena/
