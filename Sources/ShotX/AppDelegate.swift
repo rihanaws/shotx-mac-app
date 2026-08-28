@@ -42,12 +42,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             }
         }
+
+        // Auto-recheck when returning from System Settings (user toggled ON).
+        // CGPreflight is cached per-process; toggling ON requires no rebuild,
+        // but we need to dismiss our prompt and give feedback.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleDidBecomeActive),
+            name: NSApplication.didBecomeActiveNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleDidBecomeActive() {
+        // If permission was just granted while we were in Settings, dismiss
+        // the prompt and confirm — user shouldn't need to quit/reopen.
+        if Permissions.screenRecordingGranted, permissionController != nil {
+            permissionController?.dismiss()
+            permissionController = nil
+            ToastController.shared.show(
+                message: "Screen Recording granted — you're good to go!",
+                icon: "checkmark.circle.fill",
+                tint: .systemGreen
+            )
+        }
     }
 
     @discardableResult
     private func ensurePermissionOrPrompt() -> Bool {
         if Permissions.screenRecordingGranted { return true }
-        showPermissionPrompt()
+        // Trigger the one-shot system prompt (macOS will show its own dialog
+        // if permission has never been requested).
+        _ = Permissions.requestScreenRecordingAccess()
+        // Re-check: if still not granted, show our explanatory sheet + feedback.
+        if !Permissions.screenRecordingGranted {
+            showPermissionPrompt()
+            // Extra feedback so hotkey doesn't feel dead when prompt is behind.
+            NSSound.beep()
+            ToastController.shared.show(
+                message: "Screen Recording is off — enable ShotX and try again",
+                icon: "exclamationmark.shield.fill",
+                tint: .systemOrange
+            )
+        }
         return false
     }
 

@@ -7,6 +7,15 @@
         <language>en</language>
 
         <item>
+            <title>Version 1.9.10</title>
+            <pubDate>Fri, 28 Aug 2026 16:40:58 +0000</pubDate>
+            <sparkle:version>1.9.10</sparkle:version>
+            <sparkle:shortVersionString>1.9.10</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/rihanaws/shotx-mac-app/releases/download/v1.9.10/ShotX-1.9.10.dmg" length="2403926" type="application/octet-stream" sparkle:edSignature="w2XSuUNW1Z2dufvgI6JAqr6XgfWpp1nfTZ3/Uu6+RClw2rM6/TEQg2BFaXTUkX+WOSQphU7G4ly48kPRRm5lDg==" />
+        </item>
+
+        <item>
             <title>Version 1.9.9</title>
             <pubDate>Fri, 28 Aug 2026 16:09:42 +0000</pubDate>
             <sparkle:version>1.9.9</sparkle:version>

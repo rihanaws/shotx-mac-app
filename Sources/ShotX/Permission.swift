@@ -3,15 +3,31 @@ import CoreGraphics
 import SwiftUI
 
 enum Permissions {
+    /// Cheap check — no prompt. Use for menu badge and launch check.
     static var screenRecordingGranted: Bool {
-        // SCStream requires macOS 13; the 11.0 branch is dead but kept for clarity.
-        // TODO(macOS14): replace CGPreflightScreenCaptureAccess (deprecated) with CGRequestScreenCaptureAccess
-        return CGPreflightScreenCaptureAccess()
+        CGPreflightScreenCaptureAccess()
+    }
+
+    /// Check + system prompt (once). Use for capture entry points.
+    /// Triggers the macOS Screen Recording prompt if not yet granted.
+    @discardableResult
+    static func requestScreenRecordingAccess() -> Bool {
+        CGRequestScreenCaptureAccess()
     }
 
     static func openScreenRecordingSettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") else { return }
-        NSWorkspace.shared.open(url)
+        // Tahoe uses com.apple.settings.PrivacySecurity.extension.ScreenCapture,
+        // fallback to legacy preference pane URL.
+        let candidates = [
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension.ScreenCapture",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        ]
+        for str in candidates {
+            if let url = URL(string: str) {
+                NSWorkspace.shared.open(url)
+                return
+            }
+        }
     }
 }
 
