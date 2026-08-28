@@ -156,9 +156,14 @@ if [ "$SIGN_IDENTITY" = "-" ]; then
 else
     echo "→ Code signing with identity: $SIGN_IDENTITY"
 fi
-# Hardened runtime even for self-signed certs — free, no Developer ID needed.
-# Adds library validation / JIT hardening (flags=0x10000). No --timestamp without Apple ID.
-codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$APP"
+# Hardened runtime: only for non-ad-hoc (self-signed/Developer ID). Ad-hoc
+# with runtime + library validation blocks Sparkle.framework on macOS 26
+# (Team ID mismatch), so ad-hoc must sign without runtime.
+if [ "$SIGN_IDENTITY" = "-" ]; then
+    codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
+else
+    codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$APP"
+fi
 
 echo
 echo "✓ Built $APP"
