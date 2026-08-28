@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 enum GIFConverterError: LocalizedError {
     case emptyVideo
+    case tooLong(TimeInterval)
     case destinationFailed
     case noFramesDecoded
     case finalizeFailed
@@ -12,6 +13,7 @@ enum GIFConverterError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyVideo: return "Recorded video is empty."
+        case .tooLong(let d): return String(format: "Recording too long for GIF (%.0fs, max 60s). Save as video instead.", d)
         case .destinationFailed: return "Couldn't create GIF file."
         case .noFramesDecoded: return "Couldn't read any frames from the recording."
         case .finalizeFailed: return "Couldn't finalize GIF."
@@ -30,8 +32,14 @@ enum GIFConverter {
 
         let duration = try await asset.load(.duration).seconds
         guard duration > 0 else { throw GIFConverterError.emptyVideo }
-
-        let totalFrames = max(1, Int(duration * Double(fps)))
+        // Hard cap — prevents OOM/disk fill on long recordings (industry: 30s default, 60s max).
+        guard duration <= 60 else { throw GIFConverterError.tooLong(duration) }
+        let effectiveDuration = min(duration, 30)
+        let totalFrames = max(1, Int(effectiveDuration * Double(fps)))
+        if duration > 30 {
+            // Clamp to 30s of frames; caller shows toast. Log for debugging.
+            print("ShotX: GIF duration \(duration)s clamped to 30s (\(totalFrames) frames)")
+        }
         let frameDelay = 1.0 / Double(fps)
 
         let generator = AVAssetImageGenerator(asset: asset)

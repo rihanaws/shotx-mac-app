@@ -63,6 +63,10 @@ final class ShortcutStore: ObservableObject {
               let decoded = try? JSONDecoder().decode(Shortcut.self, from: data) else {
             return nil
         }
+        // Validate ranges — UserDefaults is writable via `defaults write`
+        guard decoded.keyCode <= 0x7F, decoded.modifiers <= (UInt32(cmdKey | optionKey | controlKey | shiftKey)) else {
+            return nil
+        }
         return decoded
     }
 

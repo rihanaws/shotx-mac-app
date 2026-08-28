@@ -27,7 +27,7 @@ Entry is `main.swift` (top-level code, no `@main`) → `AppDelegate`. The app is
 - `HistoryStore.swift` — `@MainActor`, capture index (`history.json`) + files in Application Support, capped at 100 entries
 - Everything else is one window/panel controller per file
 
-Most controllers are lazily created and nil'd on dismiss. Singletons: `HistoryStore`, `RecordingController`, `PinnedImageController`, `ToastController`, `AllInOneController`, `ShortcutStore`, `SoundEffect`, `UpdaterController`.
+Most controllers are lazily created and nil'd on dismiss. Singletons: `HistoryStore`, `RecordingController`, `PinnedImageController`, `ToastController`, `AllInOneController`, `ShortcutStore`, `SoundStore`, `SoundEffect`, `UpdaterController`.
 
 ## Conventions
 
@@ -55,6 +55,10 @@ When touching `HistoryStore`, remember `save()` is debounced (400ms) and runs of
 - `website/` — separate npm project (marketing site), not part of the app build. Has its own `package.json`/`package-lock.json`.
 
 No CI runs dependency audits yet (Phase 5). If GitHub reports Dependabot alerts, there's no automatic gate blocking them — check `gh api repos/<owner>/<repo>/dependabot/alerts` and fix manually; for `website/`, bumping the `vite` semver range in `package.json` and reinstalling has been enough to clear transitive advisories (esbuild/babel/postcss all sit under vite).
+
+## Settings
+
+`SettingsView` (`MainWindow.swift`) is a `ScrollView { VStack(spacing:14) }` with `SettingsCard` tiles (34×34 icon `cornerRadius 9` `tint.opacity(0.14)`). Cards: **Sound** (`speaker.wave.2.fill` orange, `SoundStore` `isShutterEnabled` `UserDefaults` `com.shotx.shutterSoundEnabled` default ON, `Toggle .switch`), **Shortcuts** (`command` blue, 4 `ShortcutRecorder` rows), **About** (`info.circle.fill` gray). `SoundStore` is `@MainActor ObservableObject` mirroring `ShortcutStore`'s `didSet -> persist` pattern; `SoundEffect.playShutter()` early-returns when disabled.
 
 ## Roadmap
 

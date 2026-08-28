@@ -20,12 +20,18 @@ RESOURCES="$CONTENTS/Resources"
 echo "→ Building release binary (universal: arm64 + x86_64)…"
 swift build -c release --arch arm64 --arch x86_64
 
-# Sparkle public key (used for verifying update signatures)
+# Sparkle public key (used for verifying update signatures).
+# Fail hard if absent — shipping without SUPublicEDKey would accept unsigned updates.
 SU_PUBLIC_KEY=""
 if [ -f ".sparkle-public-key" ]; then
     SU_PUBLIC_KEY=$(cat .sparkle-public-key)
 fi
-SU_FEED_URL="https://raw.githubusercontent.com/aimen08/shotx/main/appcast.xml"
+if [ -z "$SU_PUBLIC_KEY" ]; then
+    echo "✗ .sparkle-public-key not found or empty — refusing to build without Sparkle Ed25519 key." >&2
+    echo "  Run ./Scripts/sparkle-setup.sh to generate one, or restore the committed key." >&2
+    exit 1
+fi
+SU_FEED_URL="https://raw.githubusercontent.com/rihanaws/shotx-mac-app/main/appcast.xml"
 
 if [ ! -f "Resources/AppIcon.icns" ]; then
     echo "→ Generating app icon…"
@@ -150,7 +156,9 @@ if [ "$SIGN_IDENTITY" = "-" ]; then
 else
     echo "→ Code signing with identity: $SIGN_IDENTITY"
 fi
-codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
+# Hardened runtime even for self-signed certs — free, no Developer ID needed.
+# Adds library validation / JIT hardening (flags=0x10000). No --timestamp without Apple ID.
+codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$APP"
 
 echo
 echo "✓ Built $APP"

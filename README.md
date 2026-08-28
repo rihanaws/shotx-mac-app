@@ -13,10 +13,10 @@ Screenshots, screen recording with webcam overlay, GIF export, in-place annotati
 ![macOS](https://img.shields.io/badge/macOS-13%2B-007AFF?style=flat&logo=apple&logoColor=white)
 ![Swift](https://img.shields.io/badge/Swift-5.9-F05138?style=flat&logo=swift&logoColor=white)
 ![Menu bar](https://img.shields.io/badge/menu%20bar-only-1F2937?style=flat)
-[![Latest release](https://img.shields.io/github/v/release/aimen08/shotx?style=flat&color=22C55E)](https://github.com/aimen08/shotx/releases/latest)
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?style=flat&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/aimen08)
+[![Latest release](https://img.shields.io/github/v/release/rihanaws/shotx-mac-app?style=flat&color=22C55E)](https://github.com/rihanaws/shotx-mac-app/releases/latest)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?style=flat&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/rihanaws)
 
-[**↓ Download**](https://github.com/aimen08/shotx/releases/latest) · [Features](#features) · [Install](#install) · [Support](#support)
+[**↓ Download**](https://github.com/rihanaws/shotx-mac-app/releases/latest) · [Features](#features) · [Install](#install) · [Support](#support)
 
 </div>
 
@@ -31,6 +31,7 @@ Screenshots, screen recording with webcam overlay, GIF export, in-place annotati
 - **Extract text (OCR)** — drag a region, Apple Vision recognizes the text, and it lands on your clipboard
 - **History** — last 100 captures on disk, searchable, with thumbnails
 - **Color picker** — native loupe, hex copied to clipboard
+- **Sound toggle** — mute the shutter sound from **Settings → Sound** (on by default)
 - **Pin, drag-out, auto-updates** — float screenshots on top, drag into any app, Sparkle-signed updates
 - **Configurable global shortcuts** — re-register live, no restart
 
@@ -49,7 +50,7 @@ Screenshots, screen recording with webcam overlay, GIF export, in-place annotati
 | Settings                | `⌘,`     |
 | Quit                    | `⌘Q`     |
 
-All four global shortcuts are configurable in **Settings → Shortcuts**.
+All four global shortcuts are configurable in **Settings → Shortcuts**. Toggle the shutter sound in **Settings → Sound**.
 
 ---
 
@@ -58,13 +59,13 @@ All four global shortcuts are configurable in **Settings → Shortcuts**.
 ### Homebrew
 
 ```bash
-brew tap aimen08/shotx https://github.com/aimen08/homebrew-shotx
+brew tap rihanaws/shotx-mac-app https://github.com/rihanaws/homebrew-shotx-mac-app
 brew install --cask shotx
 ```
 
 ### Manual
 
-1. Download the latest **`ShotX-x.y.dmg`** from [Releases](https://github.com/aimen08/shotx/releases/latest)
+1. Download the latest **`ShotX-x.y.dmg`** from [Releases](https://github.com/rihanaws/shotx-mac-app/releases/latest)
 2. Drag **ShotX.app** to **Applications**
 3. **Right-click → Open** on first launch (Gatekeeper warning, the app is ad-hoc signed)
 4. Grant **Screen Recording** permission, then quit and re-open ShotX once
@@ -78,8 +79,8 @@ brew install --cask shotx
 Needs Swift 5.9 + macOS 13 SDK (Xcode 15+).
 
 ```bash
-git clone git@github.com:aimen08/shotx.git
-cd shotx
+git clone git@github.com:rihanaws/shotx-mac-app.git
+cd shotx-mac-app
 
 swift run                             # run in dev
 ./Scripts/build-app.sh                # bundle .app
@@ -113,14 +114,14 @@ cd website && npm install && npm run dev
 
 ## Support
 
-ShotX is free and open source. If it saves you some time, you can keep it fueled:
+ShotX is free and open source (original by [@aimen08](https://github.com/aimen08/shotx), maintained by [@rihanaws](https://github.com/rihanaws)). If it saves you some time, you can keep it fueled:
 
-<p><a href="https://buymeacoffee.com/aimen08"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" height="44" width="180"></a></p>
+<p><a href="https://buymeacoffee.com/rihanaws"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" height="44" width="180"></a></p>
 
 Every coffee helps keep new features, bug fixes, and auto-update infra running.
 
 ---
 
 <div align="center">
-<sub>Built with Swift, AppKit, SwiftUI, and Claude.</sub>
+<sub>Built with Swift, AppKit, SwiftUI, and Claude. • Maintained by <a href="https://github.com/rihanaws">rihanaws</a> (Sayem Abdullah Rihan) — fork of <a href="https://github.com/aimen08/shotx">aimen08/shotx</a></sub>
 </div>

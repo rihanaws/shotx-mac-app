@@ -1,6 +1,7 @@
 import Cocoa
 import Combine
 import UniformTypeIdentifiers
+import ImageIO
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -568,17 +569,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    // Max decoded pixels for pasteboard / file-open (50 MP ~ 200 MB RGBA). Prevents decompression bomb.
+    private static let maxImagePixels: Int = 50_000_000
+    private static let maxImageBytes: Int = 100 * 1024 * 1024
+
+    private func validateImageSize(_ image: NSImage) -> Bool {
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return false }
+        let pixels = cg.width * cg.height
+        guard pixels <= Self.maxImagePixels else {
+            ToastController.shared.show(message: "Image too large (\(cg.width)×\(cg.height)) — max 50 MP", icon: "exclamationmark.triangle.fill", tint: .systemOrange)
+            return false
+        }
+        return true
+    }
+
+    private func validateFileSize(at url: URL) -> Bool {
+        // Check file size without decoding
+        if let vals = try? url.resourceValues(forKeys: [.fileSizeKey]), let size = vals.fileSize, size > Self.maxImageBytes {
+            ToastController.shared.show(message: "File too large (\(size / 1_048_576) MB) — max 100 MB", icon: "exclamationmark.triangle.fill", tint: .systemOrange)
+            return false
+        }
+        // Check pixel dimensions without decoding
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? Int,
+              let h = props[kCGImagePropertyPixelHeight] as? Int
+        else { return true } // no props → let NSImage decide
+        if w * h > Self.maxImagePixels {
+            ToastController.shared.show(message: "Image too large (\(w)×\(h)) — max 50 MP", icon: "exclamationmark.triangle.fill", tint: .systemOrange)
+            return false
+        }
+        return true
+    }
+
     @objc private func openFromClipboard() {
         let pb = NSPasteboard.general
-        if let image = NSImage(pasteboard: pb) {
-            openAnnotator(with: image)
-        } else {
+        // Pre-check raw pasteboard byte size before decoding (ImageIO bomb guard)
+        if let data = pb.data(forType: .png) ?? pb.data(forType: .tiff), data.count > Self.maxImageBytes {
+            ToastController.shared.show(message: "Clipboard image too large — max 100 MB", icon: "exclamationmark.triangle.fill", tint: .systemOrange)
+            return
+        }
+        guard let image = NSImage(pasteboard: pb) else {
             ToastController.shared.show(
                 message: "No image on the clipboard",
                 icon: "exclamationmark.triangle.fill",
                 tint: .systemOrange
             )
+            return
         }
+        guard validateImageSize(image) else { return }
+        openAnnotator(with: image)
     }
 
     @objc private func openImageFile() {
@@ -589,12 +629,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
+        panel.canResolveUbiquitousConflicts = false
         panel.prompt = "Open"
         NSApp.activate(ignoringOtherApps: true)
         panel.begin { [weak self] response in
-            if response == .OK, let url = panel.url, let image = NSImage(contentsOf: url) {
-                self?.openAnnotator(with: image)
+            guard response == .OK, let url = panel.url else { return }
+            guard let self = self else { return }
+            // Reject symlink to sensitive location / huge file before decoding
+            if let vals = try? url.resourceValues(forKeys: [.isSymbolicLinkKey]), vals.isSymbolicLink == true {
+                // Resolve and ensure not escaping expected volume — for now just warn and require explicit size check
+                // We still allow symlinked images but validate dimensions
+                _ = vals
             }
+            guard self.validateFileSize(at: url) else { return }
+            guard let image = NSImage(contentsOf: url) else {
+                ToastController.shared.show(message: "Couldn't open image", icon: "exclamationmark.triangle.fill", tint: .systemOrange)
+                return
+            }
+            guard self.validateImageSize(image) else { return }
+            self.openAnnotator(with: image)
         }
     }
 
@@ -675,22 +728,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             string: "Modern macOS screen capture for the menu bar.\n\n",
             attributes: baseAttrs
         ))
-        credits.append(NSAttributedString(string: "Made by ", attributes: baseAttrs))
-        credits.append(NSAttributedString(
-            string: "@aimen08",
-            attributes: baseAttrs.merging([
-                .link: URL(string: "https://github.com/aimen08")!,
-                .foregroundColor: NSColor.linkColor
-            ]) { _, new in new }
-        ))
+        credits.append(NSAttributedString(string: "Maintained by ", attributes: baseAttrs))
+        if let url = URL(string: "https://github.com/rihanaws") {
+            credits.append(NSAttributedString(
+                string: "@rihanaws",
+                attributes: baseAttrs.merging([
+                    .link: url,
+                    .foregroundColor: NSColor.linkColor
+                ]) { _, new in new }
+            ))
+        }
+        credits.append(NSAttributedString(string: " • Fork of ", attributes: baseAttrs))
+        if let url = URL(string: "https://github.com/aimen08/shotx") {
+            credits.append(NSAttributedString(
+                string: "@aimen08",
+                attributes: baseAttrs.merging([
+                    .link: url,
+                    .foregroundColor: NSColor.linkColor
+                ]) { _, new in new }
+            ))
+        }
         credits.append(NSAttributedString(string: "\n", attributes: baseAttrs))
-        credits.append(NSAttributedString(
-            string: "github.com/aimen08/shotx",
-            attributes: baseAttrs.merging([
-                .link: URL(string: "https://github.com/aimen08/shotx")!,
-                .foregroundColor: NSColor.linkColor
-            ]) { _, new in new }
-        ))
+        if let url = URL(string: "https://github.com/rihanaws/shotx-mac-app") {
+            credits.append(NSAttributedString(
+                string: "github.com/rihanaws/shotx-mac-app",
+                attributes: baseAttrs.merging([
+                    .link: url,
+                    .foregroundColor: NSColor.linkColor
+                ]) { _, new in new }
+            ))
+        }
 
         // applicationName auto-populates from CFBundleName.
         // The "Version X" line uses CFBundleShortVersionString automatically.

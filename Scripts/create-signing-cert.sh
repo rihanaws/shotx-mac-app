@@ -27,6 +27,8 @@ else
         2>/dev/null
 
     echo "→ Bundling as PKCS12 (legacy format for macOS compatibility)"
+    # Ephemeral password for transient PKCS12 file in mktemp dir (trap rm -rf, never committed).
+    # Not a production credential — only protects the temporary .p12 on disk for `security import`.
     P12_PASS="shotx"
     LEGACY_FLAG=""
     if openssl pkcs12 -help 2>&1 | grep -q -- '-legacy'; then

@@ -56,7 +56,9 @@ enum OCR {
             )
             return
         }
-        ImageSaver.copyTextToClipboard(text)
+        // Truncate huge OCR results before putting on pasteboard (DoS guard)
+        let clipped = text.count > 100_000 ? String(text.prefix(100_000)) : text
+        ImageSaver.copyTextToClipboard(clipped)
         let lineCount = text.components(separatedBy: "\n").count
         let summary = lineCount == 1
             ? "Text copied to clipboard"

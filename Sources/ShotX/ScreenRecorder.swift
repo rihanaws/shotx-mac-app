@@ -87,6 +87,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
         captureMicrophone: Bool = false,
         exceptingWindowIDs: [CGWindowID] = []
     ) async throws {
+        // TODO(macOS14): replace with `SCShareableContent(excludingDesktopWindows:onScreenWindowsOnly:)` init (deprecated in 15.0, still works on 13 SDK)
         let content = try await SCShareableContent.excludingDesktopWindows(
             false,
             onScreenWindowsOnly: true

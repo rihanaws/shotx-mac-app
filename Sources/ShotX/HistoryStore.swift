@@ -2,6 +2,7 @@ import Cocoa
 import Combine
 import AVFoundation
 import ImageIO
+import os.log
 
 struct CaptureEntry: Identifiable, Codable, Equatable {
     enum Kind: String, Codable {
@@ -37,13 +38,36 @@ struct CaptureEntry: Identifiable, Codable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
-        filename = try c.decode(String.self, forKey: .filename)
+        let rawFilename = try c.decode(String.self, forKey: .filename)
+        // Strict whitelist: UUID + known extension, no path separators.
+        // Any traversal attempt (../, /, \) fails decode → whole file quarantined.
+        guard rawFilename == (rawFilename as NSString).lastPathComponent,
+              !rawFilename.contains("/"), !rawFilename.contains("\\"), !rawFilename.contains(".."),
+              rawFilename.range(of: #"^[0-9A-Fa-f\-]+\.(png|mp4|gif)$"#, options: .regularExpression) != nil
+        else {
+            throw DecodingError.dataCorruptedError(forKey: .filename, in: c, debugDescription: "invalid filename")
+        }
+        filename = rawFilename
         createdAt = try c.decode(Date.self, forKey: .createdAt)
-        width = try c.decode(CGFloat.self, forKey: .width)
-        height = try c.decode(CGFloat.self, forKey: .height)
+        let rawW = try c.decode(CGFloat.self, forKey: .width)
+        let rawH = try c.decode(CGFloat.self, forKey: .height)
+        // Clamp dimensions to sane range; NaN/inf/negative/huge are rejected.
+        guard rawW.isFinite, rawH.isFinite, rawW > 0, rawH > 0, rawW <= 16384, rawH <= 16384 else {
+            throw DecodingError.dataCorruptedError(forKey: .width, in: c, debugDescription: "invalid dimensions")
+        }
+        width = rawW
+        height = rawH
         // Backwards compat: older entries lack `kind` and `duration`.
         kind = (try? c.decode(Kind.self, forKey: .kind)) ?? .image
-        duration = try? c.decode(TimeInterval.self, forKey: .duration)
+        let rawDuration: TimeInterval? = try? c.decode(TimeInterval.self, forKey: .duration)
+        if let d = rawDuration {
+            guard d.isFinite, d >= 0, d <= 36000 else {
+                throw DecodingError.dataCorruptedError(forKey: .duration, in: c, debugDescription: "invalid duration")
+            }
+            duration = d
+        } else {
+            duration = nil
+        }
     }
 }
 
@@ -69,6 +93,7 @@ final class HistoryStore: ObservableObject {
     private let thumbnailCache: NSCache<NSString, NSImage> = {
         let c = NSCache<NSString, NSImage>()
         c.countLimit = 200
+        c.totalCostLimit = 50 * 1024 * 1024 // ~50 MB — bounds memory even with many thumbs
         return c
     }()
 
@@ -78,8 +103,28 @@ final class HistoryStore: ObservableObject {
         let root = appSupport.appendingPathComponent("ShotX", isDirectory: true)
         historyDir = root.appendingPathComponent("History", isDirectory: true)
         indexURL = root.appendingPathComponent("history.json")
-        try? FileManager.default.createDirectory(at: historyDir, withIntermediateDirectories: true)
+        ensureHistoryDirIsSafe()
         load()
+    }
+
+    /// Ensures historyDir is a real directory, not a symlink to an attacker-chosen location.
+    private func ensureHistoryDirIsSafe() {
+        let fm = FileManager.default
+        // If the dir (or its parent ShotX) is a symlink, remove the link and recreate.
+        for url in [historyDir.deletingLastPathComponent(), historyDir] {
+            if let vals = try? url.resourceValues(forKeys: [.isSymbolicLinkKey]),
+               vals.isSymbolicLink == true {
+                os_log("ShotX: removing symlinked directory at %{public}@", log: .default, type: .fault, url.path)
+                try? fm.removeItem(at: url)
+            }
+        }
+        try? fm.createDirectory(at: historyDir, withIntermediateDirectories: true)
+        // Re-check after creation — if it is still a symlink, creation followed the link.
+        if let vals = try? historyDir.resourceValues(forKeys: [.isSymbolicLinkKey]), vals.isSymbolicLink == true {
+            os_log("ShotX: historyDir still symlinked after create — removing", log: .default, type: .fault)
+            try? fm.removeItem(at: historyDir)
+            try? fm.createDirectory(at: historyDir, withIntermediateDirectories: true)
+        }
     }
 
     /// A missing index (first launch) is expected and leaves `entries` at its
@@ -96,9 +141,44 @@ final class HistoryStore: ObservableObject {
             let backupURL = indexURL.deletingLastPathComponent()
                 .appendingPathComponent("history.corrupt-\(Int(Date().timeIntervalSince1970)).json")
             try? FileManager.default.moveItem(at: indexURL, to: backupURL)
+            pruneCorruptBackups()
+            os_log("ShotX: history.json corrupt — quarantined to %{public}@", log: .default, type: .fault, backupURL.lastPathComponent)
             return
         }
-        entries = decoded
+        // Post-decode hardening: count cap + silent drop of any entry that somehow
+        // still violates invariants (defense in depth if JSON was hand-edited).
+        var filtered = decoded
+        if filtered.count > maxEntries * 2 {
+            os_log("ShotX: history.json has %d entries (cap %d) — truncating", log: .default, type: .fault, filtered.count, maxEntries)
+            filtered = Array(filtered.prefix(maxEntries * 2))
+        }
+        // Filter by finite dimensions / duration and jailed filename (again)
+        filtered = filtered.filter { e in
+            e.width.isFinite && e.height.isFinite && e.width > 0 && e.height > 0 && e.width <= 16384 && e.height <= 16384
+                && e.filename == (e.filename as NSString).lastPathComponent
+                && !e.filename.contains("/") && !e.filename.contains("\\")
+        }
+        if filtered.count != decoded.count {
+            os_log("ShotX: dropped %d invalid history entries", log: .default, type: .fault, decoded.count - filtered.count)
+        }
+        // Enforce maxEntries on load as well
+        if filtered.count > maxEntries {
+            filtered = Array(filtered.prefix(maxEntries))
+        }
+        entries = filtered
+        // Keep only last 3 corrupt backups
+    }
+
+    private func pruneCorruptBackups() {
+        let dir = indexURL.deletingLastPathComponent()
+        guard let contents = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.creationDateKey]) else { return }
+        let corrupt = contents.filter { $0.lastPathComponent.hasPrefix("history.corrupt-") }
+            .sorted { ($0.path) < ($1.path) }
+        if corrupt.count > 3 {
+            for old in corrupt.prefix(corrupt.count - 3) {
+                try? FileManager.default.removeItem(at: old)
+            }
+        }
     }
 
     /// Debounced, off-main index write. The snapshot is taken on the calling
@@ -189,11 +269,15 @@ final class HistoryStore: ObservableObject {
     }
 
     private func moveIntoHistory(sourceURL: URL, entry: CaptureEntry) -> CaptureEntry? {
-        let dest = historyDir.appendingPathComponent(entry.filename)
+        let dest = fileURL(for: entry)
+        // Validate source is a regular file, not symlink/dir
+        if let vals = try? sourceURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+           vals.isSymbolicLink == true || vals.isRegularFile == false {
+            os_log("ShotX: refusing non-regular source %{public}@", log: .default, type: .fault, sourceURL.path)
+            return nil
+        }
         do {
-            if FileManager.default.fileExists(atPath: dest.path) {
-                try FileManager.default.removeItem(at: dest)
-            }
+            try? FileManager.default.removeItem(at: dest)
             try FileManager.default.moveItem(at: sourceURL, to: dest)
         } catch {
             // Fall back to copy if move fails (different volumes)
@@ -208,7 +292,12 @@ final class HistoryStore: ObservableObject {
         entries.insert(entry, at: 0)
         if entries.count > maxEntries {
             for old in entries.suffix(from: maxEntries) {
-                try? FileManager.default.removeItem(at: fileURL(for: old))
+                let url = fileURL(for: old)
+                // Only delete regular files inside historyDir
+                if let vals = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+                   vals.isRegularFile == true, vals.isSymbolicLink != true {
+                    try? FileManager.default.removeItem(at: url)
+                }
             }
             entries = Array(entries.prefix(maxEntries))
         }
@@ -216,11 +305,33 @@ final class HistoryStore: ObservableObject {
     }
 
     func fileURL(for entry: CaptureEntry) -> URL {
-        historyDir.appendingPathComponent(entry.filename)
+        // Jail to historyDir: strip any path components even if decode was bypassed.
+        let safeName = (entry.filename as NSString).lastPathComponent
+        let url = historyDir.appendingPathComponent(safeName).standardized
+        // Prefix check — if jail escapes, return a harmless sentinel inside historyDir.
+        let resolvedHistory = historyDir.resolvingSymlinksInPath().standardized.path
+        let resolvedURL = url.resolvingSymlinksInPath().standardized.path
+        if !resolvedURL.hasPrefix(resolvedHistory + "/") && resolvedURL != resolvedHistory {
+            os_log("ShotX: blocked traversal for filename %{public}@", log: .default, type: .fault, entry.filename)
+            return historyDir.appendingPathComponent(UUID().uuidString + ".blocked")
+        }
+        return url
     }
 
     func image(for entry: CaptureEntry) -> NSImage? {
         let url = fileURL(for: entry)
+        // Guard against decompression bomb even for history-owned files
+        if entry.kind == .image || entry.kind == .gif {
+            if let vals = try? url.resourceValues(forKeys: [.fileSizeKey]), let size = vals.fileSize, size > 100 * 1024 * 1024 {
+                return nil
+            }
+            if let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+               let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+               let w = props[kCGImagePropertyPixelWidth] as? Int,
+               let h = props[kCGImagePropertyPixelHeight] as? Int, w * h > 50_000_000 {
+                return nil
+            }
+        }
         switch entry.kind {
         case .image, .gif:
             return NSImage(contentsOf: url)
@@ -266,7 +377,16 @@ final class HistoryStore: ObservableObject {
     /// it's dispatched to in `thumbnail(for:maxDim:)` above rather than
     /// hopping to main just because the enclosing type is `@MainActor`.
     private static nonisolated func downsampledImage(at url: URL, maxDim: CGFloat) -> NSImage? {
+        // Pre-check file size / dimensions to avoid decoding a bomb
+        if let vals = try? url.resourceValues(forKeys: [.fileSizeKey]), let size = vals.fileSize, size > 100 * 1024 * 1024 {
+            return nil
+        }
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        if let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+           let w = props[kCGImagePropertyPixelWidth] as? Int,
+           let h = props[kCGImagePropertyPixelHeight] as? Int, w * h > 50_000_000 {
+            return nil
+        }
         let opts: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceThumbnailMaxPixelSize: maxDim * 2, // 2x for Retina
@@ -291,7 +411,11 @@ final class HistoryStore: ObservableObject {
     }
 
     func remove(_ entry: CaptureEntry) {
-        try? FileManager.default.removeItem(at: fileURL(for: entry))
+        let url = fileURL(for: entry)
+        if let vals = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+           vals.isRegularFile == true, vals.isSymbolicLink != true {
+            try? FileManager.default.removeItem(at: url)
+        }
         thumbnailCache.removeObject(forKey: entry.id.uuidString as NSString)
         entries.removeAll { $0.id == entry.id }
         save()
@@ -299,7 +423,11 @@ final class HistoryStore: ObservableObject {
 
     func clear() {
         for e in entries {
-            try? FileManager.default.removeItem(at: fileURL(for: e))
+            let url = fileURL(for: e)
+            if let vals = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+               vals.isRegularFile == true, vals.isSymbolicLink != true {
+                try? FileManager.default.removeItem(at: url)
+            }
         }
         thumbnailCache.removeAllObjects()
         entries.removeAll()

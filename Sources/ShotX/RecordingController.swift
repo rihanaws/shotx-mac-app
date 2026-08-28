@@ -445,10 +445,12 @@ final class RecordingController {
         let dir = fm.temporaryDirectory
         guard let contents = try? fm.contentsOfDirectory(
             at: dir,
-            includingPropertiesForKeys: nil
+            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey]
         ) else { return }
 
         for url in contents where url.lastPathComponent.hasPrefix("shotx-") {
+            guard let vals = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+                  vals.isRegularFile == true, vals.isSymbolicLink != true else { continue }
             try? fm.removeItem(at: url)
         }
     }

@@ -80,13 +80,13 @@ hdiutil convert "$RW_DMG" \
 rm -f "$RW_DMG"
 rm -rf "$STAGING"
 
-# Sign the DMG with the same identity as the app
+# Sign the DMG with the same identity as the app (hardened runtime where possible)
 SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-}"
 if [ -z "$SIGN_IDENTITY" ] && [ -f ".signing-identity" ]; then
     SIGN_IDENTITY=$(tr -d '\n' < .signing-identity)
 fi
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
-codesign --force --sign "$SIGN_IDENTITY" "$DMG_PATH" 2>/dev/null || true
+codesign --force --options runtime --sign "$SIGN_IDENTITY" "$DMG_PATH" 2>/dev/null || codesign --force --sign "$SIGN_IDENTITY" "$DMG_PATH" 2>/dev/null || true
 
 echo
 echo "✓ Built $DMG_PATH"

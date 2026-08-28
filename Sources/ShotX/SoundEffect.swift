@@ -10,6 +10,10 @@ final class SoundEffect {
     }
 
     func playShutter() {
+        // Respect Settings → Sound toggle (default ON). Check on the main actor
+        // without capturing self across isolation boundaries.
+        let enabled = MainActor.assumeIsolated { SoundStore.shared.isShutterEnabled }
+        guard enabled else { return }
         shutter?.stop()
         shutter?.play()
     }

@@ -94,22 +94,26 @@ if [ ! -f "$DMG_PATH" ]; then
     exit 1
 fi
 
-# --- Sparkle: sign the DMG and update appcast.xml
-if [ -f ".sparkle-tools/bin/sign_update" ] && [ -f ".sparkle-public-key" ]; then
-    echo "→ Signing DMG with Sparkle"
-    SIGN_OUTPUT=$(.sparkle-tools/bin/sign_update "$DMG_PATH")
-    SIGNATURE=$(echo "$SIGN_OUTPUT" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')
-    if [ -z "$SIGNATURE" ]; then
-        echo "✗ sign_update returned no signature"
-        exit 1
-    fi
-    DMG_LENGTH=$(stat -f %z "$DMG_PATH")
-    DMG_URL="https://github.com/aimen08/shotx/releases/download/${TAG}/ShotX-${VERSION}.dmg"
-    echo "→ Updating appcast.xml"
-    Scripts/update-appcast.swift "$VERSION" "$DMG_URL" "$SIGNATURE" "$DMG_LENGTH"
-else
-    echo "→ Skipping Sparkle signing (run Scripts/sparkle-setup.sh to enable)"
+# --- Sparkle: sign the DMG and update appcast.xml — fail hard if signing unavailable
+if [ ! -f ".sparkle-tools/bin/sign_update" ]; then
+    echo "✗ Sparkle sign_update not found — run ./Scripts/sparkle-setup.sh" >&2
+    exit 1
 fi
+if [ ! -f ".sparkle-public-key" ]; then
+    echo "✗ .sparkle-public-key missing — run ./Scripts/sparkle-setup.sh" >&2
+    exit 1
+fi
+echo "→ Signing DMG with Sparkle"
+SIGN_OUTPUT=$(.sparkle-tools/bin/sign_update "$DMG_PATH")
+SIGNATURE=$(echo "$SIGN_OUTPUT" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')
+if [ -z "$SIGNATURE" ]; then
+    echo "✗ sign_update returned no signature" >&2
+    exit 1
+fi
+DMG_LENGTH=$(stat -f %z "$DMG_PATH")
+DMG_URL="https://github.com/rihanaws/shotx-mac-app/releases/download/${TAG}/ShotX-${VERSION}.dmg"
+echo "→ Updating appcast.xml"
+Scripts/update-appcast.swift "$VERSION" "$DMG_URL" "$SIGNATURE" "$DMG_LENGTH"
 
 # --- Commit (only if there are changes)
 if [ -n "$(git status --porcelain)" ]; then

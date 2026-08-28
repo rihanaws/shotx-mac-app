@@ -7,7 +7,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-SPARKLE_VERSION="2.6.4"
+SPARKLE_VERSION="2.9.4"
+SPARKLE_CHECKSUM="cb6fdbdc8884f15d62a616e79face92b08322410fd2d425edc6596ccbf4ba3b0"
 SPARKLE_DIR=".sparkle-tools"
 SPARKLE_TARBALL="Sparkle-${SPARKLE_VERSION}.tar.xz"
 SPARKLE_URL="https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/${SPARKLE_TARBALL}"
@@ -17,11 +18,25 @@ if [ ! -f "$SPARKLE_DIR/bin/sign_update" ]; then
     echo "→ Downloading Sparkle ${SPARKLE_VERSION}…"
     mkdir -p "$SPARKLE_DIR"
     curl -fsSL "$SPARKLE_URL" -o "/tmp/$SPARKLE_TARBALL"
+    # Verify checksum against Package.resolved's binaryTarget checksum (supply-chain guard)
+    if command -v shasum >/dev/null 2>&1; then
+        echo "${SPARKLE_CHECKSUM}  /tmp/${SPARKLE_TARBALL}" | shasum -a 256 -c - || {
+            echo "✗ Checksum mismatch for ${SPARKLE_TARBALL} — possible tampering, aborting." >&2
+            rm -f "/tmp/$SPARKLE_TARBALL"
+            exit 1
+        }
+    else
+        echo "  ⚠ shasum not found — skipping checksum verification (install via Xcode CLT)"
+    fi
     tar -xJf "/tmp/$SPARKLE_TARBALL" -C "$SPARKLE_DIR"
     rm -f "/tmp/$SPARKLE_TARBALL"
-    echo "  ✓ Installed to $SPARKLE_DIR/bin"
+    echo "  ✓ Installed to $SPARKLE_DIR/bin (checksum verified)"
 else
     echo "→ Sparkle tools already installed at $SPARKLE_DIR/bin"
+    # Verify existing install matches expected version
+    if [ -f "$SPARKLE_DIR/bin/sign_update" ] && ! "$SPARKLE_DIR/bin/sign_update" --help 2>&1 | grep -q "$SPARKLE_VERSION"; then
+        echo "  ⚠ Existing tools may not be $SPARKLE_VERSION — remove $SPARKLE_DIR to re-download."
+    fi
 fi
 
 GEN="$SPARKLE_DIR/bin/generate_keys"

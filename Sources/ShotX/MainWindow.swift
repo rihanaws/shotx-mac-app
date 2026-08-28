@@ -27,6 +27,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         let root = MainView(state: state)
             .environmentObject(HistoryStore.shared)
             .environmentObject(ShortcutStore.shared)
+            .environmentObject(SoundStore.shared)
         let hosting = NSHostingController(rootView: root)
 
         let window = NSWindow(contentViewController: hosting)
@@ -356,6 +357,12 @@ struct HistoryCard: View {
 
     private func saveFile() {
         let url = history.fileURL(for: entry)
+        // fileURL is already jailed; still validate source is regular file
+        if let vals = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+           vals.isSymbolicLink == true || vals.isRegularFile != true {
+            ToastController.shared.show(message: "Invalid file", icon: "exclamationmark.triangle.fill", tint: .systemRed)
+            return
+        }
         let desktop = ImageSaver.desktopDirectory()
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
@@ -418,10 +425,36 @@ private struct HistoryActionButton: View {
 
 struct SettingsView: View {
     @EnvironmentObject var shortcuts: ShortcutStore
+    @EnvironmentObject var sound: SoundStore
 
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
+                SettingsCard(
+                    icon: "speaker.wave.2.fill",
+                    tint: .orange,
+                    title: "Sound",
+                    subtitle: "Shutter feedback"
+                ) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Shutter sound")
+                                .font(.system(size: 13, weight: .medium))
+                            Text(sound.isShutterEnabled ? "Plays on every capture" : "Silent captures")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Toggle(isOn: $sound.isShutterEnabled) {
+                            Text(sound.isShutterEnabled ? "On" : "Off")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(sound.isShutterEnabled ? .primary : .secondary)
+                        }
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                    }
+                }
+
                 SettingsCard(
                     icon: "command",
                     tint: .blue,

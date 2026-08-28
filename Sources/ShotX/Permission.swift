@@ -4,10 +4,9 @@ import SwiftUI
 
 enum Permissions {
     static var screenRecordingGranted: Bool {
-        if #available(macOS 11.0, *) {
-            return CGPreflightScreenCaptureAccess()
-        }
-        return true
+        // SCStream requires macOS 13; the 11.0 branch is dead but kept for clarity.
+        // TODO(macOS14): replace CGPreflightScreenCaptureAccess (deprecated) with CGRequestScreenCaptureAccess
+        return CGPreflightScreenCaptureAccess()
     }
 
     static func openScreenRecordingSettings() {

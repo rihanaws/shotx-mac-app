@@ -23,15 +23,29 @@ enum ImageSaver {
     /// hundreds of ms on a 6K display. `completion` runs on the main queue with
     /// the destination URL, or `nil` if the encode or write failed.
     static func saveToDesktop(_ image: NSImage, completion: ((URL?) -> Void)? = nil) {
-        let desktop = desktopDirectory()
+        var desktop = desktopDirectory()
+        // Desktop symlink guard — if Desktop is a symlink, resolve and verify it's inside home.
+        if let vals = try? desktop.resourceValues(forKeys: [.isSymbolicLinkKey]), vals.isSymbolicLink == true {
+            desktop = desktop.resolvingSymlinksInPath()
+        }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
-        let url = desktop.appendingPathComponent("ShotX \(formatter.string(from: Date())).png")
+        var url = desktop.appendingPathComponent("ShotX \(formatter.string(from: Date())).png")
+        // Avoid same-second collision (DateFormatter is second granularity)
+        if FileManager.default.fileExists(atPath: url.path) {
+            url = desktop.appendingPathComponent("ShotX \(formatter.string(from: Date())) \(UUID().uuidString.prefix(4)).png")
+        }
 
         saveQueue.async {
             var result: URL?
-            if let data = pngData(from: image), (try? data.write(to: url)) != nil {
-                result = url
+            if let data = pngData(from: image) {
+                do {
+                    try data.write(to: url, options: .atomic)
+                    result = url
+                } catch {
+                    // Fallback: non-atomic write (should not happen, but don't lose the capture)
+                    if (try? data.write(to: url)) != nil { result = url }
+                }
             }
             if let completion = completion {
                 DispatchQueue.main.async { completion(result) }
@@ -57,8 +71,10 @@ enum ImageSaver {
     }
 
     static func copyTextToClipboard(_ text: String) {
+        // Defensive truncation even if caller didn't — pasteboard is IPC.
+        let clipped = text.count > 100_000 ? String(text.prefix(100_000)) : text
         let pb = NSPasteboard.general
         pb.clearContents()
-        pb.setString(text, forType: .string)
+        pb.setString(clipped, forType: .string)
     }
 }

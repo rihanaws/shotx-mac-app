@@ -119,7 +119,7 @@ for (name, pixels) in sizes {
 
 print("→ Packing into \(icnsPath)")
 let iconutil = Process()
-iconutil.launchPath = "/usr/bin/iconutil"
+iconutil.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
 iconutil.arguments = ["-c", "icns", iconsetDir, "-o", icnsPath]
 try iconutil.run()
 iconutil.waitUntilExit()

@@ -189,7 +189,17 @@ final class RecordingCompletePopupController {
     private func saveToDesktop(tempURL: URL, revealInFinder: Bool) -> URL? {
         let dest = Self.desktopDestination(extension: tempURL.pathExtension.lowercased())
         do {
+            // Validate source is regular file, not symlink
+            if let vals = try? tempURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+               vals.isSymbolicLink == true || vals.isRegularFile != true {
+                ToastController.shared.show(message: "Invalid recording file", icon: "exclamationmark.triangle.fill", tint: .systemRed)
+                return nil
+            }
             guard FileManager.default.fileExists(atPath: tempURL.path) else { return nil }
+            // No TOCTOU check-then-copy — just try copy; also ensure dest parent not symlink
+            if let vals = try? dest.deletingLastPathComponent().resourceValues(forKeys: [.isSymbolicLinkKey]), vals.isSymbolicLink == true {
+                throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError, userInfo: [NSLocalizedDescriptionKey: "Desktop is a symlink"])
+            }
             try FileManager.default.copyItem(at: tempURL, to: dest)
             if revealInFinder {
                 ToastController.shared.show(

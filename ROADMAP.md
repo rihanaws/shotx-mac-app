@@ -84,19 +84,45 @@ Commit `1ce04d6`. Not a phase — a reactive fix after GitHub flagged 9 Dependab
 
 **Not yet verified** (needs a GUI session): that a fast stop/start no longer trips `NSInternalInconsistencyException`, that recorded duration now matches wall-clock instead of running short, and that a hand-corrupted `history.json` gets moved aside instead of orphaning capture files.
 
+### Phase 5 — Security hardening ✅
+2026-08-28, branch `hardening`.
+
+**Supply chain:** `Package.swift` `Sparkle from: 2.6.0 → 2.9.4` (open range closed), `Package.resolved` pinned, `sparkle-setup.sh:10` `2.6.4 → 2.9.4` + `shasum -a 256` verification.
+
+**Signing:** `build-app.sh` now fails hard if `.sparkle-public-key` missing (prevents accepting unsigned updates), `release.sh` fails hard if `sign_update` or key absent, both scripts add `--options runtime` (hardened runtime, free with self-signed `ShotX Signing`).
+
+**HistoryStore traversal:** `CaptureEntry.filename` strictly whitelisted (`^[0-9A-Fa-f\-]+\.(png|mp4|gif)$` + `lastPathComponent` + no `..`), `fileURL(for:)` jailed via `resolvingSymlinksInPath().hasPrefix(historyDir)`, `historyDir` symlink removed + recreated, `load()` validates count/dimensions/duration, `pruneCorruptBackups()` caps at 3, `moveIntoHistory`/`register`/`remove`/`clear` check `isRegularFile && !isSymbolicLink`.
+
+**Decompression bomb:** `AppDelegate.openFromClipboard`/`openImageFile` + `HistoryStore.image/downsamp` guard `50 MP / 100 MB` via `CGImageSource` props without decoding. `OCR`/`ImageSaver` truncate at `100k` chars.
+
+**TOCTOU/atomic:** `ImageSaver.saveToDesktop` uses `.atomic` + UUID suffix on same-second collision + desktop symlink resolve; `RecordingController.cleanUpStale` and `RecordingCompletePopup.saveToDesktop` only touch regular files.
+
+**Hygiene:** `URL(string:)!` → `if let`, `ShortcutStore` validates `keyCode <=0x7F`, `LastCaptureStore` validates rect, `thumbnailCache.totalCostLimit 50 MB`.
+
+**Verified:** `swift build` clean, traversal test (8 payloads rejected), bomb guard grep, `bash -n` all scripts.
+
+### Phase 6 — Sound toggle + Tahoe polish ✅
+2026-08-28.
+
+- New `SoundStore.swift` (`@MainActor ObservableObject`, `UserDefaults` `com.shotx.shutterSoundEnabled` default ON, `didSet -> persist`), mirrors `ShortcutStore` pattern. `SoundEffect.playShutter()` early-returns when disabled (`SoundStore.shared.isShutterEnabled` via `MainActor.assumeIsolated`).
+- `MainWindow.swift`: `MainWindowController.show` injects `.environmentObject(SoundStore.shared)`, `SettingsView` adds top-most `SettingsCard(icon:"speaker.wave.2.fill" tint:.orange title:"Sound" subtitle:"Shutter feedback")` with `Toggle(.switch)` bound to `$sound.isShutterEnabled` + dynamic subtitle "Plays on every capture" / "Silent captures".
+- Tahoe polish: `ScreenRecorder.swift:90` `SCShareableContent` init (fixes deprecated-15 warning), `Permission.swift:7` collapsed dead `#available`, `Scripts/make-icon.swift:122` `launchPath → executableURL` (deprecated 13).
+
+**Not yet verified** (needs GUI): toggle OFF → silent captures across all 4 entry points + pin; ON → sound returns; quit/relaunch persists; `defaults write com.shotx.app com.shotx.shutterSoundEnabled -bool NO` respected.
+
 ---
 
 ## Next
 
-### Phase 5 — Tests & CI
+### Phase 7 — Tests & CI
 No test target and no CI exist today (`.github/` holds only `FUNDING.yml`).
 
 - `ShotX` is an `.executableTarget`, which tests cannot cleanly import. Extract the pure logic into a `ShotXCore` library the executable depends on, then add a `.testTarget`.
-- Cover the deterministic non-UI logic: `ScreenCapture` coordinate flip across simulated multi-display geometries, `HistoryStore` pruning and corrupt-index recovery, `ShortcutFormatter` keycode mapping, `GIFConverter` zero-frame guard, `CaptureEntry` Codable round-trip.
+- Cover the deterministic non-UI logic: `ScreenCapture` coordinate flip across simulated multi-display geometries, `HistoryStore` pruning and corrupt-index recovery, `ShortcutFormatter` keycode mapping, `GIFConverter` zero-frame guard + `tooLong` (30s clamp / 60s cap), `CaptureEntry` Codable round-trip, `SoundStore` defaults + `defaults write` injection.
 - Add `.github/workflows/ci.yml` — `macos-14`, `swift build -c release` + `swift test`, cache `.build`.
 
 ---
 
 ## Out of scope
 
-Deliberately excluded from this effort: new user-facing features, migrating off deprecated `CGWindowListCreateImage` (`ScreenCapture.swift:19`, `WindowCapture.swift:56`), and bounding `PinnedImageController`'s unbounded panel array.
+Deliberately excluded from this effort: migrating off deprecated `CGWindowListCreateImage` (`ScreenCapture.swift:19`, `WindowCapture.swift:56`), and bounding `PinnedImageController`'s unbounded panel array.

@@ -27,6 +27,9 @@ enum LastCaptureStore {
               let w = dict["w"] as? CGFloat,
               let h = dict["h"] as? CGFloat
         else { return nil }
+        // Validate dimensions — prevent huge rect DoS via `defaults write`
+        guard w.isFinite, h.isFinite, x.isFinite, y.isFinite,
+              w > 0, h > 0, w <= 16384, h <= 16384 else { return nil }
         let idx = (dict["screen"] as? Int) ?? 0
         let screen = NSScreen.screens.indices.contains(idx)
             ? NSScreen.screens[idx]

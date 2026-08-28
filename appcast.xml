@@ -2,7 +2,7 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
     <channel>
         <title>ShotX Updates</title>
-        <link>https://raw.githubusercontent.com/aimen08/shotx/main/appcast.xml</link>
+        <link>https://raw.githubusercontent.com/rihanaws/shotx-mac-app/main/appcast.xml</link>
         <description>Updates for ShotX</description>
         <language>en</language>
 
