@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SPARKLE_VERSION="2.9.4"
-SPARKLE_CHECKSUM="cb6fdbdc8884f15d62a616e79face92b08322410fd2d425edc6596ccbf4ba3b0"
+SPARKLE_CHECKSUM="ce89daf967db1e1893ed3ebd67575ed82d3902563e3191ca92aaec9164fbdef9"
 SPARKLE_DIR=".sparkle-tools"
 SPARKLE_TARBALL="Sparkle-${SPARKLE_VERSION}.tar.xz"
 SPARKLE_URL="https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/${SPARKLE_TARBALL}"

@@ -6,6 +6,10 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="ShotX"
 BUNDLE_ID="com.shotx.app"
+if [ -z "${VERSION:-}" ]; then
+    echo "⚠ VERSION not set — defaulting to 1.0 (Sparkle will see this as older than 1.9.8 and offer to downgrade)." >&2
+    echo "  For a shippable build, use: VERSION=1.9.9 ./Scripts/build-app.sh  or  ./Scripts/release.sh" >&2
+fi
 VERSION="${VERSION:-1.0}"
 # Build number must match what's in appcast.xml for Sparkle to compare correctly.
 # Default it to VERSION so they always align.
